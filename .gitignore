@@ -1,0 +1,32 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local state and secrets
+.env
+.env.*
+.nicegui/
+*.db
+*.sqlite3
+
+# OS and editors
+.DS_Store
+.idea/
+.vscode/
+
+# Throwaway spike output
+spikes/out/
