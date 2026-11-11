@@ -38,7 +38,7 @@ required-version = ">=0.13.7,<0.14"
 
 [tool.pytest]
 strict = true
-addopts = ["-ra", "-p", "pytester"]
+addopts = ["-ra", "-p", "pytester", "-p", "pytest_strict_gate"]
 testpaths = ["tests"]
 pythonpath = ["scripts"]
 markers = ["live: calls the real OpenRouter API; opt in with -m live and a real key"]
