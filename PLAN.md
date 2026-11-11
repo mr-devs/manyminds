@@ -104,14 +104,28 @@ manyminds/
 
 ```python
 class ModelClient(Protocol):
-    async def decompose(self, text: str, instructions: str, *, count: int,
-                        avoid: Sequence[str], model: str) -> Decomposition: ...
-    async def research(self, lead: str, source_text: str, instructions: str, *,
-                       model: str, search: SearchEngine,
-                       on_progress: ProgressCallback) -> ResearchResult: ...
-    async def converse(self, context: CheckContext, messages: Sequence[Message], *,
-                       model: str, search: SearchEngine,
-                       on_progress: ProgressCallback) -> Reply: ...
+    async def decompose(
+        self, text: str, instructions: str, *, count: int, avoid: Sequence[str], model: str
+    ) -> Decomposition: ...
+    async def research(
+        self,
+        lead: str,
+        source_text: str,
+        instructions: str,
+        *,
+        model: str,
+        search: SearchEngine,
+        on_progress: ProgressCallback,
+    ) -> ResearchResult: ...
+    async def converse(
+        self,
+        context: CheckContext,
+        messages: Sequence[Message],
+        *,
+        model: str,
+        search: SearchEngine,
+        on_progress: ProgressCallback,
+    ) -> Reply: ...
 ```
 
 `Decomposition` carries a short title for the check plus the leads. `ResearchResult` carries the
