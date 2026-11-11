@@ -351,7 +351,7 @@ update to this table.
 
 | # | Milestone | Release | Status |
 |---|---|---|---|
-| 0 | Repository and PyPI name | 0.0.1 | not started |
+| 0 | Repository and PyPI name | 0.0.1 | in progress: repo public, CI green; waiting on the PyPI pending publisher before tagging `v0.0.1` |
 | 1a | Walking skeleton on the fake model | | not started |
 | 1b | Real research through OpenRouter | 0.1.0a1 | not started |
 | 2 | Full lead-list controls | | not started |
