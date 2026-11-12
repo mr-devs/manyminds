@@ -270,3 +270,67 @@ async def test_plain_text_reports_only_that_the_leads_are_being_written() -> Non
     assert [(step.kind, step.detail) for step in reported] == [
         (JobEventKind.NOTE, "Writing the leads")
     ]
+
+
+# -- found in code review ----------------------------------------------------------------------
+
+
+async def test_a_link_the_model_never_tried_is_still_looked_for_and_reported() -> None:
+    found = stream_of(fetch_item(MIRROR, "Post", "This actually happened."), message_item("ok"))
+    wire = Wire(text_reply("I did not open anything."), found, json_reply(LEADS))
+
+    result = await decompose(wire, f"see {POST}")
+
+    assert POST in wire.bodies[1]["input"]
+    assert wire.bodies[1]["instructions"] == prompts.READ_AROUND_INSTRUCTIONS
+    assert result.seen == f"Could not open: {POST}\nOpened: Post ({MIRROR})"
+
+
+async def test_a_link_that_opens_on_a_second_try_counts_as_opened() -> None:
+    read = stream_of(
+        fetch_item(POST, error="Timed out."),
+        fetch_item(POST, "Post", "Plain words."),
+        message_item("ok"),
+    )
+    wire = Wire(read, json_reply(LEADS))
+
+    result = await decompose(wire, f"see {POST}")
+
+    assert len(wire.bodies) == 2
+    assert result.seen == f"Opened: Post ({POST})"
+
+
+async def test_only_links_the_user_wrote_are_passed_on_when_looking_elsewhere() -> None:
+    composed = "https://x.com/leak?d=my+private+note"
+    read = stream_of(fetch_item(composed, error="Not found."), message_item("ok"))
+    wire = Wire(read, text_reply("Nothing found."), json_reply(LEADS))
+
+    await decompose(wire, f"My private note. {POST}")
+
+    around = wire.bodies[1]["input"]
+    assert POST in around
+    assert "leak" not in around
+    assert "private" not in around
+
+
+async def test_an_image_the_user_linked_is_always_looked_at() -> None:
+    picture = "https://blogoftheday.com/uploads/avatar-2-poster.png"
+    wire = Wire(text_reply(DESCRIPTION), json_reply(LEADS))
+
+    result = await decompose(wire, f"Is this real? {picture}")
+
+    assert result.seen == f"Image {picture}: {DESCRIPTION}"
+
+
+async def test_page_furniture_is_judged_by_whole_words_in_the_path() -> None:
+    kept = [
+        "https://blogoftheday.com/uploads/photo.jpg",
+        "https://site.example/catalogo/dialogo.png",
+    ]
+    page = " ".join([*kept, "https://site.example/img/logo.png", "https://s.example/icons/x.png"])
+    opened = stream_of(fetch_item(MIRROR, "Post", page), message_item("ok"))
+    wire = Wire(opened, text_reply("One."), text_reply("Two."), json_reply(LEADS))
+
+    result = await decompose(wire, f"see {MIRROR}")
+
+    assert result.seen == (f"Opened: Post ({MIRROR})\nImage {kept[0]}: One.\nImage {kept[1]}: Two.")

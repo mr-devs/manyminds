@@ -213,7 +213,7 @@ async def test_a_link_in_the_text_is_opened_before_leads_are_written() -> None:
 
 async def test_only_the_sites_linked_in_the_text_may_be_opened() -> None:
     read = stream_of(message_item("Nothing opened."))
-    wire = Wire(read, json_reply(LEADS))
+    wire = Wire(read, text_reply("Nothing found elsewhere."), json_reply(LEADS))
     text = (
         "see https://example.org/a?x=1, and (https://news.example.com/story). "
         "also http://EXAMPLE.org/b and ftp://files.example.net/x"
@@ -285,3 +285,16 @@ async def test_a_linked_page_cannot_close_its_own_data_block() -> None:
 
     assert given.count("</linked_page>") == 1
     assert given.count("<linked_page ") == 1
+
+
+async def test_a_long_opened_page_is_shortened_before_the_report_is_written() -> None:
+    long_page = "word " * 30000
+    found = stream_of(
+        fetch_item("https://a.example/long", "Long", long_page), message_item("Notes on it.")
+    )
+    report = {"summary": "S", "evidence": [], "undetermined": "U"}
+    wire = Wire(found, json_reply(report))
+
+    await research(wire)
+
+    assert len(wire.bodies[1]["input"]) < 20000

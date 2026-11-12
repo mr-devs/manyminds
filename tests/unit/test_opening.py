@@ -19,7 +19,7 @@ from manyminds.core.models import (
 )
 from manyminds.core.ports import Progress
 from manyminds.core.storage import Store
-from support import RecordingModel, until
+from support import Faults, RecordingModel, until
 
 TEXT = "The bridge opened in 1932 and was the longest in the world, according to a viral post."
 
@@ -214,3 +214,48 @@ def test_a_version_three_database_is_upgraded_and_keeps_its_conversations(tmp_pa
     store.close()
     with sqlite3.connect(path) as check:
         assert check.execute("PRAGMA user_version").fetchone() == (4,)
+
+
+# -- found in code review ------------------------------------------------------------------
+
+
+async def test_leads_cannot_be_tried_again_while_another_reply_is_being_written(
+    service: CheckService, store: Store, model: RecordingModel, jobs: JobManager
+) -> None:
+    import asyncio
+
+    model.decompose_error = ModelError(ErrorKind.RATE_LIMIT, "Too many requests.")
+    check = service.start_check(TEXT)
+    await jobs.wait_until_idle()
+    model.decompose_error = None
+    model.hold_reply = True
+    sending = asyncio.create_task(service.send(check.id, "Hello?"))
+    await until(lambda: len(model.converse_calls) == 1)
+
+    with pytest.raises(ChatBusyError):
+        service.regenerate(check.id)
+    with pytest.raises(CheckBusyError):
+        service.delete_check(check.id)
+
+    model.release_reply()
+    await sending
+    service.regenerate(check.id)
+    await jobs.wait_until_idle()
+    assert store.list_messages(check.id)[1].status is MessageStatus.COMPLETE
+
+
+async def test_a_title_that_cannot_be_saved_leaves_no_hidden_leads_behind(
+    service: CheckService, store: Store, jobs: JobManager, faults: Faults
+) -> None:
+    faults.fail("UPDATE checks SET title")
+
+    check = service.start_check(TEXT)
+    await jobs.wait_until_idle()
+
+    assert store.list_messages(check.id)[1].status is MessageStatus.FAILED
+    assert store.list_leads(check.id) == []
+
+    service.regenerate(check.id)
+    await jobs.wait_until_idle()
+
+    assert [lead.text for lead in store.list_leads(check.id)] == ["First lead", "Second lead"]
