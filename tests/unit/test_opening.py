@@ -213,7 +213,7 @@ def test_a_version_three_database_is_upgraded_and_keeps_its_conversations(tmp_pa
     assert steps(store, "m1") == [(JobEventKind.NOTE, "A step")]
     store.close()
     with sqlite3.connect(path) as check:
-        assert check.execute("PRAGMA user_version").fetchone() == (4,)
+        assert check.execute("PRAGMA user_version").fetchone() == (5,)
 
 
 # -- found in code review ------------------------------------------------------------------

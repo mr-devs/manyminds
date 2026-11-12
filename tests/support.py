@@ -92,6 +92,10 @@ class RecordingModel:
     """When true, the chat reply waits until the test calls release_reply()."""
 
     decompose_calls: list[dict[str, Any]] = field(default_factory=list)
+    image_description: str = "A described image."
+    image_error: Exception | None = None
+    image_calls: list[tuple[str, bytes, str]] = field(default_factory=list)
+    """Each image shown to the model: its type, its bytes, and the model asked."""
     converse_calls: list[dict[str, Any]] = field(default_factory=list)
     converse_searches: list[SearchEngine] = field(default_factory=list)
     _reply_gate: asyncio.Event = field(default_factory=asyncio.Event)
@@ -149,6 +153,12 @@ class RecordingModel:
         if self.decompose_error is not None:
             raise self.decompose_error
         return Decomposition(title=self.title, leads=list(self.leads), seen=self.seen)
+
+    async def describe_image(self, media_type: str, data: bytes, *, model: str) -> str:
+        self.image_calls.append((media_type, data, model))
+        if self.image_error is not None:
+            raise self.image_error
+        return self.image_description
 
     async def converse(
         self,

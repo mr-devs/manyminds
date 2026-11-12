@@ -65,7 +65,7 @@ def sample_report() -> Report:
 
 def test_new_database_is_at_the_latest_schema_version(store: Store, db_path: Path) -> None:
     with sqlite3.connect(db_path) as raw:
-        assert raw.execute("PRAGMA user_version").fetchone() == (4,)
+        assert raw.execute("PRAGMA user_version").fetchone() == (5,)
 
 
 def test_check_round_trip(store: Store) -> None:
@@ -279,7 +279,7 @@ def test_reopening_does_not_reapply_migrations(db_path: Path) -> None:
     Store(db_path).close()
 
     with sqlite3.connect(db_path) as raw:
-        assert raw.execute("PRAGMA user_version").fetchone() == (4,)
+        assert raw.execute("PRAGMA user_version").fetchone() == (5,)
 
 
 def test_the_database_never_contains_a_verdict_column(store: Store, db_path: Path) -> None:
