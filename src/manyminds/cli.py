@@ -70,19 +70,16 @@ def _run_demo(port: int | None, show: bool) -> None:
 
 
 def _run_real(api_key: str, port: int | None, show: bool) -> None:
-    import httpx
-
-    from manyminds.core.openrouter.adapter import OpenRouterModelClient
-    from manyminds.core.openrouter.transport import Transport
+    from manyminds.core.openrouter.client import build_client
     from manyminds.core.services import build_services
     from manyminds.core.storage import Store
     from manyminds.ui import app
 
-    # A long read timeout: a search call can go quiet for a while between stream events.
-    http = httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0))
+    # The HTTP client lives as long as the process, which ends when the server stops.
+    model, _ = build_client(api_key)
     services = build_services(
         store=Store(":memory:"),
-        model=OpenRouterModelClient(Transport(api_key, http)),
+        model=model,
         research_models=RESEARCH_MODELS,
         decompose_model=DECOMPOSE_MODEL,
         notice=DISCLOSURE,

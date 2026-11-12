@@ -129,7 +129,7 @@ class ModelClient(Protocol):
 ```
 
 `Decomposition` carries a short title for the check plus the leads. `ResearchResult` carries the
-validated `Report`, usage, and the citations the search tool actually returned. `avoid` is how
+validated `Report` (each item already flagged against the search tool's citations) and usage. `avoid` is how
 "Generate 5 more" passes the existing leads.
 
 ### 2.4 How research output is kept honest
@@ -211,7 +211,7 @@ Draft leads are persisted, so a half-edited list survives a restart.
 | `attempt` | int | Starts at 1; incremented on retry. |
 | `error_kind` | enum or null | `auth`, `credits`, `rate_limit`, `timeout`, `provider`, `refusal`, `invalid_output`, `interrupted`, `cancelled`, `unknown` |
 | `error_message` | str or null | Human-readable, with the key and headers never included. |
-| `usage` | JSON or null | Token counts, search count, and reported cost as returned. Stored, not displayed. |
+| `usage` | JSON or null | Token counts, search count, and reported cost as returned. Shown under the finished report. |
 | `created_at`, `started_at`, `finished_at` | datetime | |
 
 **JobEvent** (live progress): `id`, `job_id`, `seq`, `kind` (`started`, `searching`,
@@ -478,7 +478,7 @@ one model, live progress lines ("searching: ..."), and reports with clickable so
   (milestone 4).
 - **Not built here, moved to the milestone that needs them:** the prompted-JSON path for
   models without structured output (4, with the catalogue); automatic retries using
-  `Retry-After` (7; the adapter already exposes the value); a `ModelCatalog`.
+  `Retry-After` (6; the adapter already exposes the value); a `ModelCatalog`.
 - Checked by hand in a browser: one real check end to end (lead generated, two searches,
   sources listed, thinking shown, report with five grounded quotes, usage line).
 

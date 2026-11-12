@@ -1,7 +1,7 @@
 [project]
 name = "manyminds"
 version = "0.1.0a1"
-description = "Pre-alpha placeholder: a local app that gathers cited evidence about claims found on the web. Not usable yet."
+description = "A local app that gathers cited evidence about claims found on the web, for you to judge. Early alpha."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

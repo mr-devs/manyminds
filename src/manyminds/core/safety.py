@@ -1,13 +1,14 @@
 """Checks on model output against what the search tool actually returned."""
 
 import re
+from collections.abc import Sequence
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 _QUOTE_MARKS = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})  # noqa: RUF001
 _SPACE = re.compile(r"\s+")
 
-PASSAGE_BREAK = "[...]"
-"""Divides separate passages of one page inside an excerpt. Exa uses the same marker."""
+_OMISSION = re.compile(r"\n[ \t]*(?:\.\.\.|\[\.\.\.\])[ \t]*\n")
+"""A line holding only `...` or `[...]`: how Exa divides separate parts of one page."""
 MIN_QUOTE_LENGTH = 15
 
 
@@ -30,19 +31,25 @@ def url_key(url: str) -> str:
 
 
 def _flatten(text: str) -> str:
-    return _SPACE.sub(" ", text.translate(_QUOTE_MARKS)).strip().casefold()
+    plain = text.replace("&lt;", "<").translate(_QUOTE_MARKS)
+    return _SPACE.sub(" ", plain).strip().casefold()
 
 
-def quote_in_excerpt(quote: str, excerpt: str) -> bool:
-    """Whether the quote appears in the excerpt, ignoring spacing, case and quote-mark style.
+def quote_in_passages(quote: str, passages: Sequence[str]) -> bool | None:
+    """Whether the quote appears within one passage the search returned.
 
-    An excerpt may hold several separate passages divided by `[...]`; the quote must sit
-    inside one of them. A quote too short to identify a passage never counts as found.
+    Spacing, case and quote-mark style are ignored, and so is the `&lt;` escaping that
+    `as_data` applies before a model sees the text. A passage is also divided wherever the
+    search engine marked an omission on a line of its own, so a quote cannot bridge a gap.
+    Returns None when nothing can be said: there is no passage, or the quote is too short
+    to identify one.
     """
     wanted = _flatten(quote)
-    if len(wanted) < MIN_QUOTE_LENGTH:
-        return False
-    return any(wanted in _flatten(passage) for passage in excerpt.split(PASSAGE_BREAK))
+    if not passages or len(wanted) < MIN_QUOTE_LENGTH:
+        return None
+    return any(
+        wanted in _flatten(piece) for passage in passages for piece in _OMISSION.split(passage)
+    )
 
 
 def as_data(text: str) -> str:

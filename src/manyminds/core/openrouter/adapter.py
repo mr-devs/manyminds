@@ -1,7 +1,7 @@
 """ModelClient backed by OpenRouter's Responses API."""
 
+import json
 import math
-import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeVar
@@ -28,12 +28,11 @@ from manyminds.core.openrouter.schemas import (
 )
 from manyminds.core.openrouter.transport import Transport
 from manyminds.core.ports import Decomposition, Progress, ProgressCallback, ResearchResult
-from manyminds.core.safety import quote_in_excerpt, url_key
+from manyminds.core.safety import quote_in_passages, url_key
 
 _Wire = TypeVar("_Wire", bound=BaseModel)
 _MAX_PROBLEM_TEXT = 2000
 _FINAL_EVENTS = ("response.completed", "response.incomplete")
-_FENCED = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 
 @dataclass
@@ -111,7 +110,7 @@ class OpenRouterModelClient:
             "model": model,
             "instructions": prompts.REPORT_INSTRUCTIONS,
             "input": prompts.report_input(
-                lead, [(c.url, c.title, c.excerpt) for c in cited], notes
+                lead, [(c.url, c.title, c.passages) for c in cited], notes
             ),
         }
         wire = await self._structured(body, "report", REPORT_SCHEMA, WireReport, tally)
@@ -193,11 +192,23 @@ def _text(response: dict[str, Any]) -> str:
 
 
 def _structured_text(response: dict[str, Any]) -> str:
-    """The JSON of a schema reply: its last text part, without any code fence around it."""
+    """The JSON object in a schema reply, taken from its last text part.
+
+    Providers sometimes ignore the schema and wrap the JSON in a sentence or a code fence, so
+    the first object that parses is lifted out. Text with no such object is returned as it is,
+    to fail validation and be shown to the model in the repair request.
+    """
     parts = _parts(response, "output_text", "text")
     text = parts[-1].strip() if parts else ""
-    fenced = _FENCED.fullmatch(text)
-    return fenced.group(1) if fenced else text
+    start = text.find("{")
+    while start != -1:
+        try:
+            _, end = json.JSONDecoder().raw_decode(text, start)
+        except ValueError:
+            start = text.find("{", start + 1)
+            continue
+        return text[start:end]
+    return text
 
 
 def _raise_if_refused_or_cut_short(response: dict[str, Any]) -> None:
@@ -206,7 +217,10 @@ def _raise_if_refused_or_cut_short(response: dict[str, Any]) -> None:
         raise ModelError(ErrorKind.REFUSAL, "The model declined: " + " ".join(refusals))
     if response.get("status") != "incomplete":
         return
-    reason = (response.get("incomplete_details") or {}).get("reason") or "unknown reason"
+    details = response.get("incomplete_details")
+    reason = details.get("reason") if isinstance(details, dict) else details
+    if not isinstance(reason, str) or not reason:
+        reason = "unknown reason"
     if reason == "content_filter":
         said = _text(response) or "no explanation given"
         raise ModelError(
@@ -224,9 +238,10 @@ def _report_progress(item: dict[str, Any], on_progress: ProgressCallback) -> Non
         if search.urls:
             on_progress(Progress(JobEventKind.SOURCES_FOUND, "\n".join(search.urls)))
     elif kind == "reasoning":
+        summary = item.get("summary")
         summaries = [
             part["text"]
-            for part in item.get("summary") or []
+            for part in (summary if isinstance(summary, list) else [])
             if isinstance(part, dict) and isinstance(part.get("text"), str) and part["text"]
         ]
         if summaries:
@@ -239,30 +254,10 @@ def _report_progress(item: dict[str, Any], on_progress: ProgressCallback) -> Non
 
 def _grounded(wire: WireReport, cited: Sequence[websearch.Citation]) -> Report:
     """Build the report, flagging each item against what the search tool returned."""
-    by_key: dict[str, websearch.Citation] = {}
-    for citation in cited:
-        try:
-            key = url_key(citation.url)
-        except ValueError:
-            continue
-        known = by_key.get(key)
-        by_key[key] = (
-            citation
-            if known is None
-            else websearch.Citation(
-                known.url,
-                known.title or citation.title,
-                websearch.join_excerpts(known.excerpt, citation.excerpt),
-            )
-        )
+    by_key = {url_key(c.url): c for c in cited}
     evidence = []
     for item in wire.evidence:
         source = by_key.get(url_key(item.url))
-        matched = (
-            quote_in_excerpt(item.quote, source.excerpt)
-            if source is not None and source.excerpt
-            else None
-        )
         evidence.append(
             EvidenceItem(
                 # A grounded item links to the page the search returned, not to whatever
@@ -272,7 +267,9 @@ def _grounded(wire: WireReport, cited: Sequence[websearch.Citation]) -> Report:
                 quote=item.quote,
                 stance=item.stance,
                 grounded=source is not None,
-                quote_matched=matched,
+                quote_matched=(
+                    quote_in_passages(item.quote, source.passages) if source is not None else None
+                ),
             )
         )
     return Report(summary=wire.summary, evidence=evidence, undetermined=wire.undetermined)

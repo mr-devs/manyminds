@@ -29,6 +29,8 @@ def _evidence_item(item: EvidenceItem) -> None:
             ui.label("Not found in search results").classes("mm-flag")
         elif item.quote_matched is False:
             ui.label("Quote not found in the search result").classes("mm-flag")
+        elif item.quote_matched is None:
+            ui.label("Quote not checked against the source").classes("mm-host")
 
 
 def report_view(report: Report) -> None:

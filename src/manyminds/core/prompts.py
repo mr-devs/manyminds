@@ -35,6 +35,8 @@ DECOMPOSE_INSTRUCTIONS = (
     "whether any lead is true. " + _DATA_RULE
 )
 
+_PASSAGE_GAP = "\n[...]\n"
+
 REPAIR_NOTE = (
     "Your previous reply was rejected because it did not match the required format. "
     "Reply again with only JSON that matches the schema exactly."
@@ -57,13 +59,13 @@ def search_input(lead: str, source_text: str, instructions: str) -> str:
 
 
 def report_input(
-    lead: str, sources: Sequence[tuple[str, str | None, str | None]], notes: str
+    lead: str, sources: Sequence[tuple[str, str | None, Sequence[str]]], notes: str
 ) -> str:
-    """`sources` are (url, title, excerpt) as returned by the search tool."""
+    """`sources` are (url, title, passages) as returned by the search tool."""
     blocks = []
-    for url, title, excerpt in sources:
+    for url, title, passages in sources:
         head = f'<source url="{_attribute(url)}" title="{_attribute(title or "")}">'
-        blocks.append(f"{head}\n{as_data(excerpt or '')}\n</source>")
+        blocks.append(f"{head}\n{as_data(_PASSAGE_GAP.join(passages))}\n</source>")
     return (
         f"{_block('lead', lead)}\n\nSearch results:\n"
         + "\n".join(blocks)

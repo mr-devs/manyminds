@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from manyminds.core.models import SearchEngine
-from manyminds.core.safety import PASSAGE_BREAK
+from manyminds.core.safety import url_key
 
 MAX_RESULTS_PER_SEARCH = 5
 MAX_SEARCHES = 6
@@ -25,7 +25,8 @@ class Citation:
 
     url: str
     title: str | None
-    excerpt: str | None
+    passages: tuple[str, ...]
+    """Excerpts of the page, each a separate piece of its text. Empty when none came back."""
 
 
 @dataclass(frozen=True)
@@ -84,31 +85,34 @@ def _output(response: dict[str, Any]) -> list[object]:
 
 
 def citations(response: dict[str, Any]) -> list[Citation]:
-    """Every page the search returned in this response, one entry per URL, in order."""
+    """Every page the search returned in this response, one entry per page, in order.
+
+    Two addresses that differ only in tracking parameters are one page. It keeps the first
+    address seen, and each distinct excerpt once.
+    """
     found: dict[str, Citation] = {}
+
+    def add(url: str, title: object, passage: object) -> None:
+        try:
+            key = url_key(url)
+        except ValueError:
+            return
+        known = found.get(key) or Citation(url, None, ())
+        passages = known.passages
+        if isinstance(passage, str) and passage and passage not in passages:
+            passages = (*passages, passage)
+        named = title if isinstance(title, str) and title else None
+        found[key] = Citation(known.url, known.title or named, passages)
+
     for item in _output(response):
         search = search_from_item(item)
         if search is not None:
             for url in search.urls:
-                found.setdefault(url, Citation(url, None, None))
+                add(url, None, None)
             continue
         for annotation in _annotations(item):
-            url = annotation["url"]
-            known = found.get(url)
-            title = annotation.get("title")
-            found[url] = Citation(
-                url,
-                (title if isinstance(title, str) and title else None)
-                or (known.title if known else None),
-                join_excerpts(known.excerpt if known else None, annotation.get("content")),
-            )
+            add(annotation["url"], annotation.get("title"), annotation.get("content"))
     return list(found.values())
-
-
-def join_excerpts(*excerpts: object) -> str | None:
-    """Several excerpts of one page as one text, kept apart so no quote can span two."""
-    kept = [text for text in excerpts if isinstance(text, str) and text]
-    return f"\n{PASSAGE_BREAK}\n".join(kept) or None
 
 
 def search_count(response: dict[str, Any]) -> int:

@@ -53,7 +53,7 @@ class Transport:
                     raise self._http_error(response, await response.aread())
                 if "application/json" in response.headers.get("content-type", ""):
                     raise self._json_instead_of_stream(await response.aread())
-                async for line in response.aiter_lines():
+                async for line in _lines(response):
                     event = _parse_line(line)
                     if event is None:
                         continue
@@ -67,7 +67,8 @@ class Transport:
             ) from None
 
     def _http_error(self, response: httpx.Response, raw: bytes) -> ModelError:
-        return self._error(response.status_code, _upstream_message(raw), _retry_after(response))
+        status = response.status_code
+        return self._error(status, _upstream_message(raw), f"HTTP {status}", _retry_after(response))
 
     def _json_instead_of_stream(self, raw: bytes) -> ModelError:
         try:
@@ -76,18 +77,13 @@ class Transport:
             found = None
         if found is None:
             return ModelError(ErrorKind.PROVIDER, "OpenRouter sent an unexpected reply.")
-        return self._error(_status_for(found[0]), found[1])
+        return self._error(_status_for(found[0]), found[1], "in its reply")
 
     def _error(
-        self,
-        status: int,
-        upstream: str,
-        retry_after: float | None = None,
-        *,
-        mid_reply: bool = False,
+        self, status: int, upstream: str, where: str, retry_after: float | None = None
     ) -> ModelError:
+        """Name a failure. `where` says how it reached us, for the message only."""
         detail = self._redact(upstream) or "no details"
-        where = "part-way through the reply" if mid_reply else f"HTTP {status}"
         kind = _STATUS_KINDS.get(status)
         if kind is ErrorKind.AUTH:
             message = "OpenRouter rejected the API key."
@@ -113,16 +109,33 @@ class Transport:
             found = _error_details(event) or (event.get("code"), str(event.get("message") or ""))
         elif kind == "response.failed":
             found = _error_details(event.get("response")) or (None, "")
+        elif kind is None:
+            # Some providers send a bare chunk that holds only an error.
+            untyped = _error_details(event)
+            if untyped is None:
+                return
+            found = untyped
         else:
             return
-        raise self._error(_status_for(found[0]), found[1], mid_reply=True)
+        raise self._error(_status_for(found[0]), found[1], "part-way through the reply")
 
 
+# Named error codes, as the HTTP status that means the same thing. A name not listed here
+# is treated as a problem with the request (400), not as a provider outage: retrying an
+# unknown failure would bill the user again for something that may never succeed.
 _CODE_STATUS = {
     "invalid_api_key": 401,
     "insufficient_quota": 402,
     "insufficient_credits": 402,
+    "content_policy_violation": 403,
+    "content_filter": 403,
+    "moderation": 403,
+    "timeout": 408,
     "rate_limit_exceeded": 429,
+    "server_error": 500,
+    "internal_error": 500,
+    "provider_unavailable": 503,
+    "overloaded": 503,
 }
 
 
@@ -143,8 +156,23 @@ def _status_for(code: object) -> int:
     if isinstance(code, str):
         if code.isdigit():
             return int(code)
-        return _CODE_STATUS.get(code, 500)
+        return _CODE_STATUS.get(code, 400)
     return 500
+
+
+async def _lines(response: httpx.Response) -> AsyncIterator[str]:
+    """The lines of a stream, split on line feeds only.
+
+    httpx's own line iterator also splits on characters such as U+2028, which may appear
+    raw inside an event's JSON text and would cut the event in two.
+    """
+    pending = ""
+    async for chunk in response.aiter_text():
+        *lines, pending = (pending + chunk).split("\n")
+        for line in lines:
+            yield line.rstrip("\r")
+    if pending:
+        yield pending.rstrip("\r")
 
 
 def _parse_line(line: str) -> dict[str, Any] | None:
