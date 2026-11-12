@@ -1,7 +1,7 @@
 """Interfaces the core depends on. Implementations live elsewhere."""
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from manyminds.core.models import JobEventKind, Report, SearchEngine
@@ -27,8 +27,20 @@ ProgressCallback = Callable[[Progress], None]
 
 
 @dataclass(frozen=True)
+class Usage:
+    """What one job consumed, summed over every model call it made."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost: float = 0.0
+    """US dollars, as reported by the provider."""
+    searches: int = 0
+
+
+@dataclass(frozen=True)
 class ResearchResult:
     report: Report
+    usage: Usage = field(default_factory=Usage)
 
 
 class ModelClient(Protocol):
