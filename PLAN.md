@@ -22,9 +22,9 @@ correction.
 | 5 | **`uv publish` does not generate attestations.** uv's documented workflow adds `astral-sh/attest-action` (v0.0.7, early) before publishing. | Follow uv's documented workflow, including the attest step. If that step breaks the first release, drop it and publish without attestations; the name claim matters more. |
 | 6 | **TestPyPI needs its own account, its own two-factor setup, and its own pending publisher.** The uv docs do not say whether `uv publish` requests the `testpypi` OIDC audience. | **Decided: no rehearsal; go straight to PyPI.** |
 | 7 | **pytest has no built-in way to fail on skipped tests.** `strict_xfail` only fails unexpected passes. | A small `conftest.py` gate fails the run on any skip or xfail whose reason does not start with `JUSTIFIED:`. The gate has its own tests. |
-| 8 | **OpenRouter's docs are now Responses-API-first** (`POST /api/v1/responses`). Chat Completions is still documented. Citation shape, structured-output shape and usage keys differ between the two. | Decide between them with a live spike at the start of milestone 1b. The choice is confined to the adapter. |
-| 9 | **Whether structured output can be combined with the web search server tool in one request is not documented.** | Same spike. If it does not work reliably, research becomes two calls: a search call that produces findings, then a no-tools call that formats them into the report schema. |
-| 10 | **`engine: auto` is not uniform.** It uses the provider's native search for OpenAI, Anthropic, Google, xAI and Perplexity models and Exa for everything else. Native search ignores `max_results` and costs more ($10 to $14 per 1,000 searches against $7 for Exa). | Keep `auto` as the default as the brief requires, and say plainly in the settings text what each option does. |
+| 8 | **OpenRouter's docs are now Responses-API-first** (`POST /api/v1/responses`). Chat Completions is still documented. Citation shape, structured-output shape and usage keys differ between the two. | **Spike done: Responses API.** Its stream shows each search query and reasoning summaries; a Chat Completions stream shows neither. See decision 15. |
+| 9 | **Whether structured output can be combined with the web search server tool in one request is not documented.** | **Spike done: it is not reliable** (the schema was silently ignored on three of five model and engine combinations). Research is always two calls. See decision 15. |
+| 10 | **`engine: auto` is not uniform.** It uses the provider's native search for OpenAI, Anthropic, Google, xAI and Perplexity models and Exa for everything else. Native search ignores `max_results` and costs more ($10 to $14 per 1,000 searches against $7 for Exa). | **Changed after the spike: the default is `exa`** (owner's decision, 2026-11-12), because native search returns no excerpts to check quotes against. `auto` stays as an option, and the settings text says plainly what each does. See decision 15. |
 | 11 | **Structured-output support is per provider endpoint, not per model**, and providers may silently ignore the parameter. | Always send `provider: {require_parameters: true}` with a schema. Models without `structured_outputs` use a prompted-JSON path. Everything is validated by our own schema either way. |
 | 12 | **OpenRouter returns some errors with HTTP 200**, both streaming and non-streaming, and a model refusal arrives as a successful response with `finish_reason: "content_filter"`. | The adapter inspects the body, never the status code alone. These cases are in the fixture set from the start. |
 | 13 | **The official `openrouter` Python SDK is auto-generated and has had 458 releases in a year** (six on the day I checked). NiceGUI 4 also no longer installs `httpx`. | Use plain `httpx` as a direct dependency and write the small amount of HTTP and SSE handling ourselves. Reconsidered at your request; reasoning in [section 7](#7-dependencies). |
@@ -129,7 +129,7 @@ class ModelClient(Protocol):
 ```
 
 `Decomposition` carries a short title for the check plus the leads. `ResearchResult` carries the
-validated `Report`, usage, and the citations the search tool actually returned. `avoid` is how
+validated `Report` (each item already flagged against the search tool's citations) and usage. `avoid` is how
 "Generate 5 more" passes the existing leads.
 
 ### 2.4 How research output is kept honest
@@ -211,7 +211,7 @@ Draft leads are persisted, so a half-edited list survives a restart.
 | `attempt` | int | Starts at 1; incremented on retry. |
 | `error_kind` | enum or null | `auth`, `credits`, `rate_limit`, `timeout`, `provider`, `refusal`, `invalid_output`, `interrupted`, `cancelled`, `unknown` |
 | `error_message` | str or null | Human-readable, with the key and headers never included. |
-| `usage` | JSON or null | Token counts, search count, and reported cost as returned. Stored, not displayed. |
+| `usage` | JSON or null | Token counts, search count, and reported cost as returned. Shown under the finished report. |
 | `created_at`, `started_at`, `finished_at` | datetime | |
 
 **JobEvent** (live progress): `id`, `job_id`, `seq`, `kind` (`started`, `searching`,
@@ -272,7 +272,7 @@ are stored as `Lead` rows with `origin = conversation` and `state = draft`.
 | `decompose_model` | `openai/gpt-6-luna` | Fast and cheap; every endpoint supports structured output. Checked against the live catalogue at startup. |
 | `research_models` | last used | List of model ids. |
 | `conversation_model` | last used | |
-| `search_engine` | `auto` | `auto` or `exa`. |
+| `search_engine` | `exa` | `auto` or `exa`. |
 | `max_concurrent_jobs` | 6 | |
 | `job_timeout_seconds` | 300 | |
 | `disclosure_acknowledged_at` | null | Set during first-run onboarding. |
@@ -362,7 +362,7 @@ update to this table.
 |---|---|---|---|
 | 0 | Repository and PyPI name | 0.0.1 | **done 2026-11-11** |
 | 1a | Walking skeleton on the fake model | | **done 2026-11-11** |
-| 1b | Real research through OpenRouter | 0.1.0a1 | not started |
+| 1b | Real research through OpenRouter | 0.1.0a1 | done; release pending |
 | 2 | Full lead-list controls | | not started |
 | 3 | Home, check page, persistence across restarts | 0.1.0a2 | not started |
 | 4 | Multiple models per lead | | not started |
@@ -461,6 +461,26 @@ without a failing test first.
 **You will see:** with `OPENROUTER_API_KEY` set in your shell, `uv run manyminds` does the same
 flow as 1a against real models: real leads within a few seconds, real parallel research with
 one model, live progress lines ("searching: ..."), and reports with clickable sources.
+
+**Milestone 1b as built (2026-11-12)**
+
+- The spike settled the open questions; see decision 15. Research is two calls on the
+  Responses API, and the search engine defaults to `exa`.
+- Refusals are detected the Responses way (a `refusal` content part, or status `incomplete`
+  with reason `content_filter`), not through `finish_reason`.
+- HTTP 403 is treated as a refusal, because OpenRouter uses it for moderation blocks.
+- A report that breaks the schema anywhere (an extra `verdict` field, a `javascript:` link,
+  a missing quote) is rejected whole, after one repair attempt.
+- Each finished job records tokens, searches and cost, shown under its report. Failed jobs do
+  not record what they used.
+- Bare `manyminds` starts the app when `OPENROUTER_API_KEY` is set and explains what to do
+  when it is not. The research models offered are a fixed list until the model catalogue
+  (milestone 4).
+- **Not built here, moved to the milestone that needs them:** the prompted-JSON path for
+  models without structured output (4, with the catalogue); automatic retries using
+  `Retry-After` (6; the adapter already exposes the value); a `ModelCatalog`.
+- Checked by hand in a browser: one real check end to end (lead generated, two searches,
+  sources listed, thinking shown, report with five grounded quotes, usage line).
 
 ### Milestone 2: full lead-list controls
 
@@ -700,7 +720,7 @@ poor CI gate today.
 | **The search tool is in beta** and its shape may change. | One module owns it. Fixture tests pin the shape we rely on. A live smoke test catches drift. Version and date of the docs we built against are recorded. |
 | **Structured output differs across models and providers.** | `require_parameters`; a prompted-JSON path for models without support; our own validation always; one repair attempt; a clear `invalid_output` failure. The picker marks models without structured-output support. |
 | **Prompt injection** from web pages, and second-hand through reports fed to conversations. | Search tool only. Retrieved text framed as data. Schema-validated output. Grounding flags. Images stripped and link schemes restricted. No model output can start work. Adversarial tests per milestone. This reduces the risk; it does not remove it, and the README will say so. |
-| **Structured output with the search tool may not work in one request.** | Spike first; two-call fallback already designed. |
+| **Structured output with the search tool does not work reliably in one request** (confirmed by the spike). | Research is two calls: search, then a no-tools formatting call. See decision 15. |
 | **Hallucinated quotes or sources.** | Grounding and quote-match flags shown to the user; every item links to its source so the user can check. |
 | **The tool being read as an arbiter of truth.** | Reports carry no verdict or confidence at all: only a neutral summary, quoted evidence with links, and a mandatory statement of what could not be determined. Multiple models are shown side by side, not merged into one answer. |
 | **NiceGUI 4.0 is a week old.** | Pin `<5`; lock file; fall back to 3.19 if a blocking bug appears. The thin UI layer limits the cost. |

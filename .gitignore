@@ -33,3 +33,6 @@ spikes/out/
 
 # Browser automation output
 .playwright-mcp/
+
+# raw live-API captures; scrubbed copies become fixtures
+spikes/captures/

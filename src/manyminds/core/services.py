@@ -20,6 +20,8 @@ class Services:
     checks: CheckService
     research_models: tuple[str, ...]
     """Models offered for research, the default first."""
+    notice: str = ""
+    """Shown on the home page: where pasted text goes, or that this is a demo."""
 
 
 def build_services(
@@ -28,7 +30,8 @@ def build_services(
     model: ModelClient,
     research_models: Sequence[str],
     decompose_model: str,
-    search_engine: SearchEngine = SearchEngine.AUTO,
+    search_engine: SearchEngine = SearchEngine.EXA,
+    notice: str = "",
     max_concurrent: int = 6,
 ) -> Services:
     bus = EventBus()
@@ -43,4 +46,5 @@ def build_services(
         jobs=jobs,
         checks=checks,
         research_models=tuple(research_models),
+        notice=notice,
     )

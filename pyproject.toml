@@ -1,7 +1,7 @@
 [project]
 name = "manyminds"
-version = "0.0.1"
-description = "Pre-alpha placeholder: a local app that gathers cited evidence about claims found on the web. Not usable yet."
+version = "0.1.0a1"
+description = "A local app that gathers cited evidence about claims found on the web, for you to judge. Early alpha."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -9,7 +9,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Matthew DeVerna" }]
 keywords = ["fact-checking", "research", "evidence", "nicegui", "openrouter"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Environment :: Web Environment",
     "Intended Audience :: End Users/Desktop",
     "Operating System :: OS Independent",
@@ -21,6 +21,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "httpx>=0.28.1",
     "nicegui>=4.0,<5",
     "platformdirs>=4.14.5",
     "pydantic>=2.14.3",
@@ -42,7 +43,7 @@ required-version = ">=0.13.7,<0.14"
 
 [tool.pytest]
 strict = true
-addopts = ["-ra", "-p", "pytester", "-p", "pytest_strict_gate", "-p", "pytest_network_block"]
+addopts = ["-ra", "-p", "pytester", "-p", "pytest_strict_gate", "-p", "pytest_network_block", "-m", "not live"]
 testpaths = ["tests"]
 pythonpath = ["scripts", "tests"]
 asyncio_mode = "auto"

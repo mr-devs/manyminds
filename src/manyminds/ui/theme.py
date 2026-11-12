@@ -162,6 +162,7 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
 /* Evidence: the quotation leads, its source follows. */
 .mm-evidence { padding: 18px 0; gap: 8px; align-items: stretch; }
 .mm-quote { font-size: 17px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mm-usage { margin-top: 22px; color: var(--mm-tertiary); }
 .mm-flag { font-size: 12px; color: var(--mm-notice); }
 .mm-host { font-size: 13px; color: var(--mm-tertiary); }
 

@@ -1,10 +1,10 @@
 """Interfaces the core depends on. Implementations live elsewhere."""
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
-from manyminds.core.models import JobEventKind, Report, SearchEngine
+from manyminds.core.models import JobEventKind, Report, SearchEngine, Usage
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,7 @@ ProgressCallback = Callable[[Progress], None]
 @dataclass(frozen=True)
 class ResearchResult:
     report: Report
+    usage: Usage = field(default_factory=Usage)
 
 
 class ModelClient(Protocol):

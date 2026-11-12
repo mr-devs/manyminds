@@ -73,7 +73,7 @@ class JobManager:
             except ModelError as error:
                 self._fail(job_id, error.kind, error.message)
                 return
-            self._store.mark_job_done(job_id, result.report)
+            self._store.mark_job_done(job_id, result.report, result.usage)
         # The job is finished and saved. Announcing that must not be able to undo it.
         try:
             record(Progress(JobEventKind.FINISHED))

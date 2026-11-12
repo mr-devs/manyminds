@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from nicegui import ui
 
-from manyminds.core.models import EvidenceItem, Report, Stance
+from manyminds.core.models import EvidenceItem, Report, Stance, Usage
 from manyminds.ui import theme
 
 GROUPS = (
@@ -27,6 +27,10 @@ def _evidence_item(item: EvidenceItem) -> None:
                 ui.label(urlsplit(item.url).hostname or "").classes("mm-host")
         if not item.grounded:
             ui.label("Not found in search results").classes("mm-flag")
+        elif item.quote_matched is False:
+            ui.label("Quote not found in the search result").classes("mm-flag")
+        elif item.quote_matched is None:
+            ui.label("Quote not checked against the source").classes("mm-host")
 
 
 def report_view(report: Report) -> None:
@@ -47,3 +51,12 @@ def report_view(report: Report) -> None:
 
     ui.label("Could not be determined").classes(theme.SECTION)
     ui.label(report.undetermined).classes(theme.BODY)
+
+
+def usage_line(usage: Usage | None) -> str | None:
+    """What a job used, as one line, or None when there is nothing to report."""
+    if usage is None or not (usage.searches or usage.input_tokens or usage.output_tokens):
+        return None
+    searches = "1 search" if usage.searches == 1 else f"{usage.searches} searches"
+    tokens = usage.input_tokens + usage.output_tokens
+    return f"{searches}, {tokens:,} tokens, ${usage.cost:.4f}"
