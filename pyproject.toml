@@ -21,6 +21,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "httpx>=0.28.1",
     "nicegui>=4.0,<5",
     "platformdirs>=4.14.5",
     "pydantic>=2.14.3",
