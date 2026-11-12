@@ -87,3 +87,11 @@ def test_a_page_being_read_has_its_own_transcript_line() -> None:
     assert STEP_TEXT[JobEventKind.READING].format(detail="https://a.example/x") == (
         "Reading: https://a.example/x"
     )
+
+
+def test_research_is_told_to_find_another_way_in_and_to_follow_media_to_its_source() -> None:
+    text = prompts.SEARCH_INSTRUCTIONS
+
+    for principle in ("will not open", "mirror or archive", "video or image", "first published"):
+        assert principle in text, principle
+    assert len(text) <= 1300
