@@ -117,6 +117,10 @@ MIGRATIONS: Sequence[str] = (
 )
 
 STOPPED = "Stopped because the app was closed."
+READ_FROM_LINKS = (
+    "What the app read from the links in this text. Image descriptions were written by a "
+    "model and may be wrong; they are not evidence."
+)
 
 
 class NotFoundError(LookupError):
@@ -203,7 +207,13 @@ class Store:
         )
 
     def create_check_with_leads(
-        self, *, title: str, source_text: str, instructions: str, leads: Sequence[str]
+        self,
+        *,
+        title: str,
+        source_text: str,
+        instructions: str,
+        leads: Sequence[str],
+        seen: str = "",
     ) -> Check:
         """Save a check, the message that opened it and the reply holding its leads, together
         or not at all."""
@@ -218,7 +228,7 @@ class Store:
                 db, check_id, MessageRole.USER, MessageStatus.COMPLETE, source_text
             )
             reply_id = self._insert_message(
-                db, check_id, MessageRole.ASSISTANT, MessageStatus.COMPLETE, ""
+                db, check_id, MessageRole.ASSISTANT, MessageStatus.COMPLETE, seen
             )
             for text in leads:
                 self._insert_lead(db, check_id, text, LeadOrigin.GENERATED, reply_id)
@@ -530,7 +540,15 @@ class Store:
         )
         if not rows:
             return self.get_check(lead.check_id).source_text
-        return "\n\n".join(row["body"] for row in rows)
+        said = "\n\n".join(row["body"] for row in rows)
+        # The opening reply holds what was read from the links in the first message.
+        opening = self._all(
+            "SELECT body FROM messages WHERE check_id = ? AND seq = 2 AND role = ?",
+            (lead.check_id, MessageRole.ASSISTANT),
+        )
+        if opening and opening[0]["body"]:
+            said += f"\n\n{READ_FROM_LINKS}\n{opening[0]['body']}"
+        return said
 
     def begin_turn(self, check_id: str, body: str) -> Message:
         """Save what the user said and a reply that is still to come. Returns that reply."""

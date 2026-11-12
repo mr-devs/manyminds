@@ -271,7 +271,7 @@ def check_page(
                 mine = [lead for lead in every if lead.message_id == message.id]
                 if not mine and not opening:
                     return
-                if mine and not message.body:
+                if mine and (opening or not message.body):
                     ui.label(LEADS_INTRO).classes("mm-say-note")
                 with ui.column().classes("mm-leads").mark("lead-list"):
                     for lead in mine:
@@ -308,7 +308,12 @@ def check_page(
                 reason = message.error_message or "unknown reason"
                 ui.label(f"No reply: {reason}").classes("mm-reply-error").mark("reply-error")
             else:
-                if message.body:
+                if message.body and opening:
+                    # The opening reply's text is the app's account of what the links showed.
+                    with ui.column().classes("mm-read"):
+                        ui.label("What was read from your links").classes(theme.LABEL)
+                        ui.label(message.body).classes("mm-read-text").mark("read")
+                elif message.body:
                     ui.label(message.body).classes("mm-say").mark("reply")
                 lead_group(message, opening)
 

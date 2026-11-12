@@ -218,6 +218,14 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
 }
 .mm-say { font-size: 16px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
 .mm-say-note { font-size: 14px; line-height: 1.5; color: var(--mm-secondary); }
+.mm-read {
+    background: var(--mm-surface); border-radius: 12px; padding: 14px 18px; gap: 0;
+    align-items: stretch;
+}
+.mm-read-text {
+    font-size: 14px; line-height: 1.6; color: #48484a; white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
 .mm-pending { align-items: center; gap: 10px; }
 .mm-reply-error { font-size: 14px; line-height: 1.5; color: var(--mm-failed); }
 .mm-go.q-btn {

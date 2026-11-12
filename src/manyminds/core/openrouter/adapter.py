@@ -1,5 +1,6 @@
 """ModelClient backed by OpenRouter's Responses API."""
 
+import asyncio
 import json
 import math
 from collections.abc import Callable, Sequence
@@ -70,6 +71,39 @@ class _Tally:
         )
 
 
+@dataclass
+class _Shared:
+    """What the links and images in the user's text turned out to show."""
+
+    fetched: list[websearch.Fetch]
+    images: list[tuple[str, str | None]]
+    """(address, description); the description is None if the image could not be looked at."""
+
+    @property
+    def pages(self) -> list[tuple[str, str | None, str | None]]:
+        return [(page.url, page.title, page.content) for page in self.fetched]
+
+    def seen(self) -> str:
+        """A plain account for the user of what was read."""
+        lines = []
+        for page in self.fetched:
+            if page.content is None:
+                lines.append(f"Could not open: {page.url}")
+            else:
+                lines.append(f"Opened: {page.title or 'Untitled page'} ({page.url})")
+        for url, description in self.images:
+            lines.append(f"Image {url}: {description or 'could not be looked at'}")
+        return "\n".join(lines)
+
+
+def _fetched(response: dict[str, Any]) -> list[websearch.Fetch]:
+    output = response.get("output")
+    pages = [
+        websearch.fetch_from_item(item) for item in (output if isinstance(output, list) else [])
+    ]
+    return [page for page in pages if page is not None]
+
+
 class OpenRouterModelClient:
     def __init__(self, transport: Transport) -> None:
         self._transport = transport
@@ -78,22 +112,24 @@ class OpenRouterModelClient:
         self, text: str, instructions: str, *, count: int, avoid: Sequence[str], model: str
     ) -> Decomposition:
         tally = _Tally()
-        pages = await self._read_links(text, model, tally)
+        shared = await self._shared(text, model, tally)
         body = {
             "model": model,
             "instructions": prompts.DECOMPOSE_INSTRUCTIONS,
-            "input": prompts.decompose_input(text, instructions, count, avoid, pages),
+            "input": prompts.decompose_input(
+                text, instructions, count, avoid, shared.pages, shared.images
+            ),
         }
         wire = await self._structured(
             body, "decomposition", DECOMPOSITION_SCHEMA, WireDecomposition, tally
         )
-        return Decomposition(title=wire.title, leads=wire.leads[:count])
+        return Decomposition(title=wire.title, leads=wire.leads[:count], seen=shared.seen())
 
     async def converse(self, message: str, context: ChatContext, *, model: str) -> ChatReply:
         """Answer in the main conversation. The call has no tools; only links the user put
         in this message are opened first."""
         tally = _Tally()
-        pages = await self._read_links(message, model, tally)
+        shared = await self._shared(message, model, tally)
         leads = [
             (
                 note.text,
@@ -116,15 +152,28 @@ class OpenRouterModelClient:
         body = {
             "model": model,
             "instructions": prompts.CHAT_INSTRUCTIONS,
-            "input": prompts.chat_input(message, turns, leads, pages),
+            "input": prompts.chat_input(message, turns, leads, shared.pages, shared.images),
         }
         wire = await self._structured(body, "chat_reply", CHAT_SCHEMA, WireChatReply, tally)
         return ChatReply(body=wire.reply, leads=wire.leads)
 
-    async def _read_links(
-        self, text: str, model: str, tally: _Tally
-    ) -> list[tuple[str, str | None, str | None]]:
-        """Open the links in pasted text and return (url, title, content) for each.
+    async def _shared(self, text: str, model: str, tally: _Tally) -> _Shared:
+        """Work out what the links and images in the user's text show.
+
+        Linked pages are opened; a link that will not open is looked for another way; images,
+        whether linked directly or found on those pages, are each shown to the model.
+        """
+        pages = await self._read_links(text, model, tally)
+        failed = [page.url for page in pages if page.content is None]
+        if failed:
+            pages += await self._read_around(failed, model, tally)
+        opened = [page.content for page in pages if page.content is not None]
+        urls = prompts.image_links([text, *opened])
+        described = await asyncio.gather(*(self._look(url, model, tally) for url in urls))
+        return _Shared(pages, list(zip(urls, described, strict=True)))
+
+    async def _read_links(self, text: str, model: str, tally: _Tally) -> list[websearch.Fetch]:
+        """Open the pages the text links to.
 
         The tool is held to the sites the text itself links to, so that nothing on a page can
         send the model on to an address of its own choosing.
@@ -145,11 +194,55 @@ class OpenRouterModelClient:
             },
             tally,
         )
-        output = final.get("output")
-        fetched = [
-            websearch.fetch_from_item(item) for item in (output if isinstance(output, list) else [])
-        ]
-        return [(page.url, page.title, page.content) for page in fetched if page is not None]
+        return _fetched(final)[: prompts.MAX_LINKED_PAGES]
+
+    async def _read_around(
+        self, links: Sequence[str], model: str, tally: _Tally
+    ) -> list[websearch.Fetch]:
+        """Look for what unopened links show somewhere else: a mirror, an archive, coverage.
+
+        This call may search and open any site, so it is given the addresses alone and never
+        what the user wrote. If it fails, the leads are written without it.
+        """
+        try:
+            final = await self._run(
+                {
+                    "model": model,
+                    "instructions": prompts.READ_AROUND_INSTRUCTIONS,
+                    "input": prompts.read_around_input(links),
+                    "tools": [
+                        websearch.tool_entry(SearchEngine.EXA),
+                        websearch.fetch_tool_entry(max_uses=prompts.MAX_LINKED_PAGES),
+                    ],
+                    **websearch.REQUEST_FIELDS,
+                },
+                tally,
+            )
+        except ModelError:
+            return []
+        found = [page for page in _fetched(final) if page.content is not None]
+        return found[: prompts.MAX_LINKED_PAGES]
+
+    async def _look(self, url: str, model: str, tally: _Tally) -> str | None:
+        """A description of one image, or None if the model could not be shown it."""
+        body = {
+            "model": model,
+            "instructions": prompts.IMAGE_INSTRUCTIONS,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": prompts.IMAGE_REQUEST},
+                        {"type": "input_image", "image_url": url},
+                    ],
+                }
+            ],
+        }
+        try:
+            described = _text(await self._run(body, tally)).strip()
+        except ModelError:
+            return None
+        return described[: prompts.MAX_IMAGE_DESCRIPTION_CHARS] or None
 
     async def research(
         self,

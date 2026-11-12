@@ -126,7 +126,11 @@ class CheckService:
         if len(title) > MAX_TITLE_LENGTH:
             title = title[: MAX_TITLE_LENGTH - 1].rstrip() + "…"
         return self.store.create_check_with_leads(
-            title=title, source_text=text, instructions=instructions, leads=leads
+            title=title,
+            source_text=text,
+            instructions=instructions,
+            leads=leads,
+            seen=decomposition.seen.strip(),
         )
 
     def delete_check(self, check_id: str) -> None:

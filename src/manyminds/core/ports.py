@@ -13,6 +13,8 @@ class Decomposition:
 
     title: str
     leads: list[str]
+    seen: str = ""
+    """What was read from links and images in the text, in plain words, for the user to see."""
 
 
 @dataclass(frozen=True)
