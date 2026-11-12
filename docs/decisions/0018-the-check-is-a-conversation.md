@@ -29,6 +29,9 @@ beneath them, for example to summarise what the research threads found.
   far its research has got, and the finished reports. It answers from the reports only, with
   no verdict. When an answer needs research that has not been done, it proposes leads, which
   appear as rows like any others. Nothing a model writes starts work.
+- A research agent is given, as the text its lead comes from, everything the user had said
+  up to the reply that put the lead forward. For the opening leads that is the pasted text.
+- A check cannot be deleted while a reply to it is being written.
 - Links the user puts in a new message are opened first, held to the sites in that message,
   exactly as for the first message (decision 17).
 - Replies are structured (`reply`, `leads`) and validated, with one repair attempt. The reply
