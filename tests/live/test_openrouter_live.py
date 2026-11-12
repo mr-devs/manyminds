@@ -12,12 +12,11 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 
-import httpx
 import pytest
 
 from manyminds.core.models import JobEventKind, SearchEngine
 from manyminds.core.openrouter.adapter import OpenRouterModelClient
-from manyminds.core.openrouter.transport import Transport
+from manyminds.core.openrouter.client import build_client
 from manyminds.core.ports import Progress
 
 pytestmark = pytest.mark.live
@@ -34,8 +33,9 @@ async def client() -> AsyncIterator[OpenRouterModelClient]:
     key = os.environ.get("OPENROUTER_API_KEY")
     if not key:
         pytest.fail("OPENROUTER_API_KEY is not set; live tests need a real key.")
-    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as http:
-        yield OpenRouterModelClient(Transport(key, http))
+    model, http = build_client(key)
+    yield model
+    await http.aclose()
 
 
 async def test_decompose_returns_leads(client: OpenRouterModelClient) -> None:

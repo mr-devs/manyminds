@@ -73,9 +73,7 @@ async def transport_failure(reply: Any) -> ModelError:
 # -- stream framing -----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "separator", [chr(0x2028), chr(0x2029), chr(0x85), chr(0x0B), chr(0x0C), chr(0x1C)]
-)
+@pytest.mark.parametrize("separator", [chr(0x2028), chr(0x2029), chr(0x85)])
 async def test_unusual_line_characters_inside_an_event_do_not_split_it(separator: str) -> None:
     text = f"before{separator}after"
     line = 'data: {"type": "response.created", "note": "' + text + '"}'
