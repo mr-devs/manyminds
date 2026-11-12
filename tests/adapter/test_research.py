@@ -84,7 +84,7 @@ async def failure(wire: Wire) -> ModelError:
     return caught.value
 
 
-async def test_the_search_call_has_exactly_the_search_tool_and_no_schema() -> None:
+async def test_the_search_call_has_the_search_and_fetch_tools_and_no_schema() -> None:
     wire = Wire(fixture("search_exa.sse"), json_reply(REPORT))
 
     await research(wire, instructions="Prefer primary sources.")
@@ -96,7 +96,11 @@ async def test_the_search_call_has_exactly_the_search_tool_and_no_schema() -> No
         {
             "type": "openrouter:web_search",
             "parameters": {"engine": "exa", "max_results": 5, "max_uses": 6},
-        }
+        },
+        {
+            "type": "openrouter:web_fetch",
+            "parameters": {"engine": "exa", "max_uses": 6, "max_content_tokens": 8000},
+        },
     ]
     assert "text" not in first
     assert "response_format" not in first

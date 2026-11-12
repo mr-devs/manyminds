@@ -63,3 +63,17 @@ def test_research_is_told_how_to_weigh_sources() -> None:
     ):
         assert principle in text, principle
     assert len(prompts.SEARCH_INSTRUCTIONS) <= 1300
+
+
+def test_research_is_told_it_can_open_pages() -> None:
+    assert "open" in prompts.SEARCH_INSTRUCTIONS.lower()
+    assert "search result or the page" in prompts.SEARCH_INSTRUCTIONS
+
+
+def test_a_page_being_read_has_its_own_transcript_line() -> None:
+    from manyminds.core.models import JobEventKind
+    from manyminds.ui.pages import STEP_TEXT
+
+    assert STEP_TEXT[JobEventKind.READING].format(detail="https://a.example/x") == (
+        "Reading: https://a.example/x"
+    )
