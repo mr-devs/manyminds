@@ -138,6 +138,20 @@ async def test_at_most_four_images_are_looked_at_and_none_twice() -> None:
     assert len(wire.bodies) == 6
 
 
+async def test_profile_pictures_and_icons_are_not_looked_at() -> None:
+    page = (
+        "https://pbs.twimg.com/profile_images/99/face_200x200.jpg "
+        "https://site.example/static/favicon.png https://site.example/avatars/u1.png "
+        f"https://abs.twimg.com/emoji/v2/72x72/1f600.png {PHOTO}"
+    )
+    opened = stream_of(fetch_item(MIRROR, "Post", page), message_item("ok"))
+    wire = Wire(opened, text_reply(DESCRIPTION), json_reply(LEADS))
+
+    result = await decompose(wire, f"see {MIRROR}")
+
+    assert result.seen == f"Opened: Post ({MIRROR})\nImage {PHOTO}: {DESCRIPTION}"
+
+
 async def test_an_image_that_cannot_be_looked_at_does_not_stop_the_leads() -> None:
     wire = Wire(error_response(400), json_reply(LEADS))
 
