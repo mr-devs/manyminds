@@ -15,10 +15,14 @@ _DATA_RULE = (
 
 SEARCH_INSTRUCTIONS = (
     "You research one lead using web search. Search for sources that bear on the lead, "
-    "including ones that cut against it. Then write notes on what the sources say: for each "
-    "useful source give its URL, its title, a short passage copied exactly from the search "
-    "result, and whether the passage supports or undermines the lead. Say what you could not "
-    "find out. Do not give a verdict or a rating on whether the lead is true. " + _DATA_RULE
+    "including ones that cut against it. Look for more than one independent source, and "
+    "prefer primary ones (official records, original documents, direct statements, the "
+    "original post or footage) over reports about them. Trace a claim to where it first "
+    "appeared when you can. Note the date of each source, and say so when sources disagree "
+    "or all repeat a single origin. Then write notes on what the sources say: for each useful "
+    "source give its URL, its title, a short passage copied exactly from the search result, "
+    "and whether the passage supports or undermines the lead. Say what you could not find "
+    "out. Do not give a verdict or a rating on whether the lead is true. " + _DATA_RULE
 )
 
 REPORT_INSTRUCTIONS = (
@@ -29,22 +33,25 @@ REPORT_INSTRUCTIONS = (
 )
 
 DECOMPOSE_INSTRUCTIONS = (
-    "You help a careful reader decide what to verify in a piece of text. List the leads "
-    "worth researching, most important first, and give the text a short neutral title.\n\n"
-    "A good lead:\n"
+    "You help a careful reader decide what to verify in a piece of text, usually a news "
+    "report, a social media post, or a description of a video or image. List the leads worth "
+    "researching, most important first, and give the text a short neutral title.\n\n"
+    "Claim leads test what the text asserts. Each one:\n"
     "- is a checkable statement of fact (an event, figure, quotation, attribution, cause or "
     "comparison), not an opinion, prediction or value judgement;\n"
     "- makes one claim, so a sentence that asserts two things becomes two leads;\n"
     "- can stand on its own: it names who, what, when and where, with no pronouns or "
     "references back to the text;\n"
-    "- is faithful to the text: it keeps the original's strength, scope and figures, neither "
-    "sharpened nor softened;\n"
-    "- is worded neutrally, as the claim to examine and not as a conclusion.\n\n"
-    "Put first the claims the text's argument rests on and those that would matter most if "
-    "wrong, such as ones about health, safety, money, rights or a person's reputation. Where "
-    "a statistic, quotation, image or study carries the argument, add a lead on whether its "
-    "source says what the text says it does. Leave out trivia, common knowledge and claims "
-    "no source could settle. Do not judge whether any lead is true. " + _DATA_RULE
+    "- is faithful to the text: it keeps the original's strength, scope and figures.\n\n"
+    "Context leads establish what the text is and where it came from. Include the ones that "
+    "matter here: when and where the event happened; who first reported or posted it, and "
+    "what the original said; whether an image, video or quotation is older than, or from a "
+    "different event than, the text implies; what earlier events or coverage a reader needs "
+    "in order to understand it; what relevant facts the text leaves out.\n\n"
+    "Put first the leads the text's argument rests on and those that would matter most if "
+    "wrong, such as ones about health, safety, money, rights or a person's reputation. Leave "
+    "out trivia and common knowledge. Word each lead neutrally, as something to examine. "
+    "Do not judge whether any lead is true. " + _DATA_RULE
 )
 
 _PASSAGE_GAP = "\n[...]\n"
