@@ -150,6 +150,8 @@ IMAGE_REQUEST = "Describe this image."
 MAX_IMAGES = 4
 MAX_IMAGE_DESCRIPTION_CHARS = 1500
 _IMAGE_ENDINGS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+_INCIDENTAL = ("profile_images", "avatar", "favicon", "emoji", "/icons/", "logo")
+"""Parts of an address that mark a picture as furniture of the page, not what was shared."""
 
 MAX_LINKED_PAGE_CHARS = 12000
 MAX_LINKED_PAGES = 3
@@ -189,7 +191,8 @@ def image_links(texts: Sequence[str]) -> list[str]:
     urls: list[str] = []
     for text in texts:
         for url, _, is_image in _links(text):
-            if is_image and url not in urls:
+            incidental = any(part in url.lower() for part in _INCIDENTAL)
+            if is_image and not incidental and url not in urls:
                 urls.append(url)
     return urls[:MAX_IMAGES]
 
