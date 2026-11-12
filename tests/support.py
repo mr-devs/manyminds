@@ -66,6 +66,8 @@ class RecordingModel:
 
     title: str = "A title"
     leads: Sequence[str] = ("First lead", "Second lead")
+    seen: str = ""
+    """What lead generation reports having read from links and images."""
     decompose_error: Exception | None = None
     failures: dict[str, Exception] = field(default_factory=dict)
     reports: dict[str, Report] = field(default_factory=dict)
@@ -123,7 +125,7 @@ class RecordingModel:
         )
         if self.decompose_error is not None:
             raise self.decompose_error
-        return Decomposition(title=self.title, leads=list(self.leads))
+        return Decomposition(title=self.title, leads=list(self.leads), seen=self.seen)
 
     async def converse(self, message: str, context: ChatContext, *, model: str) -> ChatReply:
         self.converse_calls.append({"message": message, "context": context, "model": model})

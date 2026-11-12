@@ -486,3 +486,35 @@ async def test_a_message_to_a_check_that_is_gone_is_refused(
         await service.send("no-such-check", "Hello?")
 
     assert model.converse_calls == []
+
+
+# -- what was read from links ----------------------------------------------------------------
+
+SEEN = "Opened: A post (https://mirror.example/p)\nImage https://img.example/a.jpg: A stage."
+
+
+async def test_the_opening_reply_says_what_was_read_from_the_links(
+    service: CheckService, store: Store, model: RecordingModel
+) -> None:
+    model.seen = SEEN
+
+    check = await service.create_check("see https://x.com/a/status/1")
+
+    assert store.list_messages(check.id)[1].body == SEEN
+
+
+async def test_research_is_given_what_was_read_marked_as_a_models_reading(
+    service: CheckService, store: Store, model: RecordingModel, jobs: JobManager
+) -> None:
+    model.seen = SEEN
+    model.leads = ["Lead A"]
+    check = await service.create_check("see https://x.com/a/status/1")
+
+    service.launch_lead(store.list_leads(check.id)[0].id, ["vendor/model-a"])
+    await jobs.wait_until_idle()
+
+    assert model.research_calls[0]["source_text"] == (
+        "see https://x.com/a/status/1\n\n"
+        "What the app read from the links in this text. Image descriptions were written by "
+        "a model and may be wrong; they are not evidence.\n" + SEEN
+    )

@@ -312,3 +312,17 @@ async def test_research_status_changes_in_place_while_the_user_is_mid_conversati
 
     with user.scope(marker="thread-row-0"):
         await user.should_see("Finished")
+
+
+async def test_what_was_read_from_links_is_shown_above_the_leads_as_plain_text(
+    user: User, model: RecordingModel
+) -> None:
+    model.seen = (
+        "Opened: <b>A post</b> (https://mirror.example/p)\nImage https://i.example/a.jpg: A stage."
+    )
+    await new_check(user)
+
+    await user.should_see("What was read from your links")
+    await user.should_see(kind=ui.label, content="Opened: <b>A post</b> (https://mirror.example/p)")
+    await user.should_see("Leads worth researching. Start any of them, reword them, or leave them.")
+    assert lead_boxes(user) == ["Lead A", "Lead B", "Lead C"]
