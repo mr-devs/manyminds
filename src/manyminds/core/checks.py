@@ -1,7 +1,7 @@
 """Use cases for a check: generate leads, edit them, launch research."""
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Sequence
 
 from manyminds.core.errors import ModelError
 from manyminds.core.events import ChatUpdated, EventBus
@@ -30,12 +30,14 @@ from manyminds.core.ports import (
     LeadNote,
     ModelClient,
     PastTurn,
+    Progress,
+    ProgressCallback,
 )
 from manyminds.core.storage import NotFoundError, Store
 
 logger = logging.getLogger(__name__)
 
-INITIAL_LEADS = 10
+INITIAL_LEADS = 5
 MAX_LEADS = 25
 """The most leads waiting in one list. Launched leads no longer count."""
 TITLE_LENGTH = 60
@@ -112,26 +114,79 @@ class CheckService:
         """Checks with a reply being written right now."""
         self._search_engine = search_engine
 
+    def start_check(self, text: str, instructions: str = "") -> Check:
+        """Save a check at once and work out its leads in the background.
+
+        The check opens with the user's message and a reply still to come. Each step taken
+        is saved under that reply and announced, so the work can be watched.
+        """
+        reply = self._open(text, instructions)
+        self.jobs.spawn(self._settle(reply.check_id, reply, self._opening(reply, instructions)))
+        return self.store.get_check(reply.check_id)
+
     async def create_check(self, text: str, instructions: str = "") -> Check:
-        """Generate leads for a pasted text and save both. Nothing is saved on failure."""
+        """Generate leads for a pasted text and wait for them. Nothing is kept on failure."""
+        reply = self._open(text, instructions)
+        try:
+            await self._opening(reply, instructions)
+        except BaseException:
+            self.store.delete_check(reply.check_id)
+            raise
+        return self.store.get_check(reply.check_id)
+
+    def regenerate(self, check_id: str) -> None:
+        """Try again to work out a check's leads, after the first attempt failed."""
+        replies = [
+            message
+            for message in self.store.list_messages(check_id)
+            if message.role is MessageRole.ASSISTANT
+        ]
+        if not replies or replies[0].status is not MessageStatus.FAILED:
+            raise ValueError("Lead generation has not failed, so there is nothing to try again.")
+        check = self.store.get_check(check_id)
+        reply = self.store.reopen_message(replies[0].id)
+        self._bus.publish(ChatUpdated(check_id=check_id))
+        self.jobs.spawn(self._settle(check_id, reply, self._opening(reply, check.instructions)))
+
+    def _open(self, text: str, instructions: str) -> Message:
         if not text.strip():
             raise ValueError("The text to check is empty")
+        return self.store.open_check(
+            title=_squash(text)[:TITLE_LENGTH], source_text=text, instructions=instructions
+        )
+
+    async def _opening(self, reply: Message, instructions: str) -> Message:
+        """Work out the leads for a check and fill in its opening reply."""
+        check = self.store.get_check(reply.check_id)
         decomposition = await self._model.decompose(
-            text, instructions, count=INITIAL_LEADS, avoid=[], model=self._decompose_model
+            check.source_text,
+            instructions,
+            count=INITIAL_LEADS,
+            avoid=[],
+            model=self._decompose_model,
+            on_progress=self._recorder(reply),
         )
         leads = _unique_leads(decomposition.leads, INITIAL_LEADS)
         if not leads:
             raise ModelError(ErrorKind.INVALID_OUTPUT, "No leads could be generated for this text.")
-        title = _squash(decomposition.title) or _squash(text)[:TITLE_LENGTH]
+        title = _squash(decomposition.title)
         if len(title) > MAX_TITLE_LENGTH:
             title = title[: MAX_TITLE_LENGTH - 1].rstrip() + "…"
-        return self.store.create_check_with_leads(
-            title=title,
-            source_text=text,
-            instructions=instructions,
-            leads=leads,
-            seen=decomposition.seen.strip(),
+        done = self.store.finish_message(
+            reply.id, decomposition.seen.strip(), leads, LeadOrigin.GENERATED
         )
+        if title:
+            self.store.rename_check(reply.check_id, title)
+        return done
+
+    def _recorder(self, reply: Message) -> ProgressCallback:
+        """Saves each step under the reply and tells whoever is watching."""
+
+        def record(progress: Progress) -> None:
+            self.store.add_message_step(reply.id, progress.kind, progress.detail)
+            self._bus.publish(ChatUpdated(check_id=reply.check_id))
+
+        return record
 
     def delete_check(self, check_id: str) -> None:
         """Delete a check and its research. Refused while any of that research is running,
@@ -223,42 +278,45 @@ class CheckService:
             raise ChatBusyError("Wait for the reply before sending another message.")
         context = self._chat_context(check_id, self.store.list_messages(check_id))
         reply = self.store.begin_turn(check_id, body)
+        return await self._settle(check_id, reply, self._reply(reply, body, context))
+
+    async def _settle(self, check_id: str, reply: Message, work: Awaitable[Message]) -> Message:
+        """See a reply through: run the work that fills it in, or save why there is none.
+
+        While this runs the check is busy. Watchers are told at the start and at the end,
+        whatever happens.
+        """
         self._replying.add(check_id)
         try:
             self._bus.publish(ChatUpdated(check_id=check_id))
-            return await self._settle(check_id, reply, body, context)
+            try:
+                return await work
+            except ModelError as error:
+                reason = error.message
+            except Exception as error:
+                # The text of an unexpected error may contain anything, so only its type is
+                # kept.
+                name = type(error).__name__
+                logger.error("A reply on check %s failed unexpectedly: %s", check_id, name)
+                reason = f"Unexpected error ({name})"
+            try:
+                return self.store.fail_message(reply.id, reason)
+            except Exception as error:
+                logger.error(
+                    "A failed reply on check %s could not be recorded: %s",
+                    check_id,
+                    type(error).__name__,
+                )
+                return reply
         finally:
-            # Whatever happened, the conversation is free again and watchers are told.
             self._replying.discard(check_id)
             self._bus.publish(ChatUpdated(check_id=check_id))
 
-    async def _settle(
-        self, check_id: str, reply: Message, body: str, context: ChatContext
-    ) -> Message:
-        """Get the reply and save it, or save why there is none."""
-        try:
-            return await self._reply(check_id, reply.id, body, context)
-        except ModelError as error:
-            reason = error.message
-        except Exception as error:
-            # The text of an unexpected error may contain anything, so only its type is kept.
-            name = type(error).__name__
-            logger.error("A reply on check %s failed unexpectedly: %s", check_id, name)
-            reason = f"Unexpected error ({name})"
-        try:
-            return self.store.fail_message(reply.id, reason)
-        except Exception as error:
-            logger.error(
-                "A failed reply on check %s could not be recorded: %s",
-                check_id,
-                type(error).__name__,
-            )
-            return reply
-
-    async def _reply(
-        self, check_id: str, reply_id: str, body: str, context: ChatContext
-    ) -> Message:
-        answer = await self._model.converse(body, context, model=self._chat_model)
+    async def _reply(self, reply: Message, body: str, context: ChatContext) -> Message:
+        check_id = reply.check_id
+        answer = await self._model.converse(
+            body, context, model=self._chat_model, on_progress=self._recorder(reply)
+        )
         room = MAX_LEADS - len(self.store.list_draft_leads(check_id))
         leads = _unique_leads(
             answer.leads, max(room, 0), [lead.text for lead in self.store.list_leads(check_id)]
@@ -266,7 +324,7 @@ class CheckService:
         said = answer.body.strip()
         if not said and not leads:
             raise ModelError(ErrorKind.INVALID_OUTPUT, "The model sent back an empty reply.")
-        return self.store.finish_message(reply_id, said, leads)
+        return self.store.finish_message(reply.id, said, leads)
 
     def _chat_context(self, check_id: str, messages: Sequence[Message]) -> ChatContext:
         turns = tuple(

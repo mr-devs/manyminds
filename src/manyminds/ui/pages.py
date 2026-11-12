@@ -8,11 +8,9 @@ from nicegui.events import ScrollEventArguments, ValueChangeEventArguments
 
 from manyminds.core.checks import (
     ChatBusyError,
-    CheckBusyError,
     NothingToLaunchError,
     TooManyLeadsError,
 )
-from manyminds.core.errors import ModelError
 from manyminds.core.events import ChatUpdated, JobUpdated, Update
 from manyminds.core.models import (
     JobEvent,
@@ -88,8 +86,6 @@ def home_page(services: Services, checks_changed: Callable[[], object]) -> None:
                 .mark("composer")
             )
             with ui.row().classes("mm-composer-foot items-center justify-end no-wrap gap-3"):
-                spinner = ui.spinner(size="sm", color="grey-6")
-                spinner.set_visibility(False)
                 button = ui.button("Generate leads").props("unelevated no-caps")
                 button.classes(theme.BUTTON)
         problem = ui.label().classes(theme.ERROR + " text-center")
@@ -101,33 +97,20 @@ def home_page(services: Services, checks_changed: Callable[[], object]) -> None:
             problem.set_text(message)
             problem.set_visibility(True)
 
-        busy = {"now": False}
-
-        async def generate() -> None:
+        def generate() -> None:
             text = composer.value or ""
-            if busy["now"]:
-                return
             if not text.strip():
                 show_problem("Paste some text first.")
                 return
-            problem.set_visibility(False)
-            busy["now"] = True
-            button.disable()
-            spinner.set_visibility(True)
             try:
-                check = await services.checks.create_check(text)
-            except ModelError as error:
-                show_problem(error.message)
+                check = services.checks.start_check(text)
             except Exception as error:
                 logger.error("Creating a check failed: %s", type(error).__name__)
                 show_problem("Something went wrong and nothing was saved. Please try again.")
-            else:
-                checks_changed()
-                ui.navigate.to(f"/check/{check.id}")
-            finally:
-                busy["now"] = False
-                button.enable()
-                spinner.set_visibility(False)
+                return
+            # The leads are worked out in the open, in the conversation itself.
+            checks_changed()
+            ui.navigate.to(f"/check/{check.id}")
 
         button.on_click(generate)
         composer.on(SEND_KEY, generate)
@@ -138,7 +121,7 @@ def home_page(services: Services, checks_changed: Callable[[], object]) -> None:
 LEADS_INTRO = "Leads worth researching. Start any of them, reword them, or leave them."
 
 
-def _confirm_delete(on_confirm: Callable[[], None]) -> ui.dialog:
+def confirm_delete(on_confirm: Callable[[], None]) -> ui.dialog:
     with ui.dialog() as dialog, ui.card().classes("mm-dialog"):
         ui.label("Delete this check and its research?").classes("mm-dialog-title")
         ui.label(
@@ -159,7 +142,7 @@ def _confirm_delete(on_confirm: Callable[[], None]) -> ui.dialog:
 
 
 def check_page(
-    services: Services, updates: Updates, check_id: str, checks_changed: Callable[[], object]
+    services: Services, updates: Updates, check_id: str, ask_delete: Callable[[str], object]
 ) -> None:
     """One check as a running conversation: what the user said, the replies, and under each
     reply the leads it put forward, which are started one at a time."""
@@ -171,27 +154,11 @@ def check_page(
             ui.label("This check could not be found.").classes(theme.MUTED)
             return
 
-        def delete() -> None:
-            try:
-                services.checks.delete_check(check_id)
-            except NotFoundError:
-                pass  # Already deleted from another tab; the outcome is the same.
-            except CheckBusyError as error:
-                tell(str(error))
-                return
-            except Exception as error:
-                logger.error("Deleting a check failed: %s", type(error).__name__)
-                tell("This check could not be deleted. Nothing was changed.")
-                return
-            checks_changed()
-            ui.navigate.to("/")
-
-        dialog = _confirm_delete(delete)
         with ui.row().classes("mm-head"):
-            ui.label(check.title).classes("mm-chat-title")
-            ui.button("Delete check", on_click=dialog.open).props("flat no-caps").classes(
-                theme.QUIET
-            )
+            title = ui.label(check.title).classes("mm-chat-title")
+            ui.button("Delete check", on_click=lambda: ask_delete(check_id)).props(
+                "flat no-caps"
+            ).classes(theme.QUIET)
 
         def tell(message: str) -> None:
             notice.set_text(message)
@@ -204,6 +171,8 @@ def check_page(
         """How to redraw the leads under each reply, by the reply's id."""
         drawn: dict[str, tuple[ui.element, MessageStatus]] = {}
         """Each message already on the page, and the state it was drawn in."""
+        working: dict[str, tuple[ui.element, int]] = {}
+        """For each reply still being worked out: where its steps go, and the last one shown."""
         follower = Follower()
 
         def redraw_leads() -> None:
@@ -297,17 +266,37 @@ def check_page(
             groups[message.id] = group.refresh
             group()
 
+        def try_again() -> None:
+            try:
+                services.checks.regenerate(check_id)
+            except ValueError:
+                pass  # Already under way again, started from another tab.
+            except Exception as error:
+                logger.error("Generating leads again failed: %s", type(error).__name__)
+                tell("That could not be tried again. Nothing was changed.")
+
         def draw(message: Message, opening: bool) -> None:
             if message.role is MessageRole.USER:
                 ui.label(message.body).classes("mm-bubble").mark("user-message")
             elif message.status is MessageStatus.PENDING:
+                steps = ui.column().classes("mm-steps")
+                working[message.id] = (steps, 0)
                 with ui.row().classes("mm-pending"):
                     ui.spinner(size="sm", color="grey-6")
-                    ui.label("Writing a reply").classes(theme.MUTED)
+                    ui.label(
+                        "Working out what to research" if opening else "Writing a reply"
+                    ).classes(theme.MUTED)
             elif message.status is MessageStatus.FAILED:
+                _steps_taken(services, message)
                 reason = message.error_message or "unknown reason"
-                ui.label(f"No reply: {reason}").classes("mm-reply-error").mark("reply-error")
+                lead_in = "Leads could not be generated" if opening else "No reply"
+                ui.label(f"{lead_in}: {reason}").classes("mm-reply-error").mark("reply-error")
+                if opening:
+                    ui.button("Try again", on_click=try_again).props("flat no-caps").classes(
+                        theme.QUIET + " self-start"
+                    )
             else:
+                _steps_taken(services, message, "How these leads were made" if opening else None)
                 if message.body and opening:
                     # The opening reply's text is the app's account of what the links showed.
                     with ui.column().classes("mm-read"):
@@ -316,6 +305,15 @@ def check_page(
                 elif message.body:
                     ui.label(message.body).classes("mm-say").mark("reply")
                 lead_group(message, opening)
+
+        def show_new_steps(message: Message) -> None:
+            """Add the steps taken since the last look, without rebuilding the earlier ones."""
+            steps, last = working[message.id]
+            with steps:
+                for step in store.list_message_steps(message.id, after=last):
+                    ui.label(step_text(step.kind, step.detail)).classes("mm-step")
+                    last = step.seq
+            working[message.id] = (steps, last)
 
         area = _follow_scroll(follower, "mm-chat")
         with area:
@@ -335,9 +333,13 @@ def check_page(
                     else:
                         slot = known[0]
                         slot.clear()
+                    working.pop(message.id, None)
+                    groups.pop(message.id, None)
                     with slot:
                         draw(message, opening and is_reply)
                     drawn[message.id] = (slot, message.status)
+                if message.id in working:
+                    show_new_steps(message)
                 if is_reply:
                     opening = False
             if follower.following:
@@ -394,6 +396,10 @@ def check_page(
 
         def on_update(event: Update) -> None:
             if isinstance(event, ChatUpdated):
+                try:
+                    title.set_text(store.get_check(check_id).title)
+                except NotFoundError:
+                    return  # Deleted from the sidebar or another tab.
                 sync()
                 return
             label = status_labels.get(event.thread_id)
@@ -477,6 +483,7 @@ STEP_TEXT = {
     JobEventKind.SEARCHING: "Searching: {detail}",
     JobEventKind.READING: "Reading: {detail}",
     JobEventKind.WRITING: "Writing the report",
+    JobEventKind.NOTE: "{detail}",
     JobEventKind.RETRYING: "Trying again: {detail}",
     JobEventKind.FINISHED: "Report ready",
     JobEventKind.FAILED: "Stopped: {detail}",
@@ -489,6 +496,24 @@ PASSAGE_HEADING = {
     JobEventKind.MESSAGE: None,
 }
 """Entries shown as a passage of the model's or the search tool's own text."""
+
+
+def step_text(kind: JobEventKind, detail: str) -> str:
+    """One step as a single line. A step with no fixed wording is shown as it was reported."""
+    return STEP_TEXT[kind].format(detail=detail) if kind in STEP_TEXT else detail
+
+
+def _steps_taken(services: Services, message: Message, heading: str | None = None) -> None:
+    """The steps that led to a reply, folded away under a heading, if there were any."""
+    steps = services.store.list_message_steps(message.id)
+    if not steps:
+        return
+    with (
+        ui.expansion(heading or "Steps taken").props("dense").classes("mm-how"),
+        ui.column().classes("mm-steps"),
+    ):
+        for step in steps:
+            ui.label(step_text(step.kind, step.detail)).classes("mm-step")
 
 
 def _transcript_entry(event: JobEvent) -> None:

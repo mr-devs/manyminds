@@ -87,6 +87,9 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
     overflow-wrap: anywhere;
 }
 .mm-side-date { font-size: 12px; color: var(--mm-tertiary); margin-top: 2px; }
+.mm-side-item .q-item__section--side { padding-left: 6px; }
+.mm-side-delete.q-btn { opacity: 0; transition: opacity 0.15s ease; }
+.mm-side-item:hover .mm-side-delete.q-btn, .mm-side-delete.q-btn:focus-visible { opacity: 1; }
 .mm-side-empty { font-size: 13px; color: var(--mm-tertiary); padding: 2px 10px; }
 
 /* One centred column for everything. */
@@ -227,6 +230,13 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
     overflow-wrap: anywhere;
 }
 .mm-pending { align-items: center; gap: 10px; }
+.mm-steps { gap: 8px; align-items: stretch; }
+.mm-steps:empty { display: none; }
+.mm-how.q-expansion-item { margin: -4px 0; }
+.mm-how .q-item { padding: 0; min-height: 28px; font-size: 13px; color: var(--mm-secondary); }
+.mm-how .q-item__section--side { padding-left: 6px; min-width: 0; }
+.mm-how .q-expansion-item__content { padding: 8px 0 4px; }
+.mm-how .q-focus-helper { display: none; }
 .mm-reply-error { font-size: 14px; line-height: 1.5; color: var(--mm-failed); }
 .mm-go.q-btn {
     background: var(--mm-ink) !important; color: var(--mm-paper) !important;
@@ -385,7 +395,7 @@ def sidebar(saved_checks: Callable[[], object]) -> None:
         saved_checks()
 
 
-def sidebar_checks(checks: Sequence[Check]) -> None:
+def sidebar_checks(checks: Sequence[Check], ask_delete: Callable[[str], object]) -> None:
     """The saved checks, newest first. Titles come from a model, so they are plain text."""
     if not checks:
         ui.label("No checks yet").classes("mm-side-empty")
@@ -397,11 +407,20 @@ def sidebar_checks(checks: Sequence[Check]) -> None:
                 ui.item(on_click=lambda target=target: ui.navigate.to(target))
                 .props("clickable")
                 .classes("mm-side-item")
-                .mark(f"sidebar-check-{index}"),
-                ui.item_section(),
+                .mark(f"sidebar-check-{index}")
             ):
-                ui.label(check.title).classes("mm-side-title")
-                ui.label(format_when(check.created_at.astimezone())).classes("mm-side-date")
+                with ui.item_section():
+                    ui.label(check.title).classes("mm-side-title")
+                    ui.label(format_when(check.created_at.astimezone())).classes("mm-side-date")
+                with ui.item_section().props("side"):
+                    # The click must not also open the check.
+                    (
+                        ui.button(icon="delete_outline")
+                        .on("click.stop", lambda check_id=check.id: ask_delete(check_id))
+                        .props('flat round dense size=sm aria-label="Delete check"')
+                        .classes("mm-icon mm-side-delete")
+                        .mark(f"sidebar-delete-{index}")
+                    )
 
 
 @contextmanager

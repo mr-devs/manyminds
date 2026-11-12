@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+from collections.abc import Coroutine
+from typing import Any
 
 from manyminds.core.errors import ModelError
 from manyminds.core.events import EventBus, JobUpdated
@@ -22,11 +24,17 @@ class JobManager:
         self._model = model
         self._bus = bus
         self._slots = asyncio.Semaphore(max_concurrent)
-        self._tasks: set[asyncio.Task[None]] = set()
+        self._tasks: set[asyncio.Task[Any]] = set()
 
     def start(self, job_id: str) -> None:
         """Schedule a queued job. Must be called from the running event loop."""
         task = asyncio.get_running_loop().create_task(self._run(job_id))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def spawn(self, work: Coroutine[Any, Any, object]) -> None:
+        """Run other background work, so that waiting until idle waits for it too."""
+        task = asyncio.get_running_loop().create_task(work)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 

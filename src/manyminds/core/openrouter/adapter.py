@@ -109,10 +109,19 @@ class OpenRouterModelClient:
         self._transport = transport
 
     async def decompose(
-        self, text: str, instructions: str, *, count: int, avoid: Sequence[str], model: str
+        self,
+        text: str,
+        instructions: str,
+        *,
+        count: int,
+        avoid: Sequence[str],
+        model: str,
+        on_progress: ProgressCallback | None = None,
     ) -> Decomposition:
         tally = _Tally()
-        shared = await self._shared(text, model, tally)
+        tell = on_progress or _silent
+        shared = await self._shared(text, model, tally, tell)
+        tell(Progress(JobEventKind.NOTE, "Writing the leads"))
         body = {
             "model": model,
             "instructions": prompts.DECOMPOSE_INSTRUCTIONS,
@@ -125,11 +134,18 @@ class OpenRouterModelClient:
         )
         return Decomposition(title=wire.title, leads=wire.leads[:count], seen=shared.seen())
 
-    async def converse(self, message: str, context: ChatContext, *, model: str) -> ChatReply:
+    async def converse(
+        self,
+        message: str,
+        context: ChatContext,
+        *,
+        model: str,
+        on_progress: ProgressCallback | None = None,
+    ) -> ChatReply:
         """Answer in the main conversation. The call has no tools; only links the user put
         in this message are opened first."""
         tally = _Tally()
-        shared = await self._shared(message, model, tally)
+        shared = await self._shared(message, model, tally, on_progress or _silent)
         leads = [
             (
                 note.text,
@@ -157,22 +173,29 @@ class OpenRouterModelClient:
         wire = await self._structured(body, "chat_reply", CHAT_SCHEMA, WireChatReply, tally)
         return ChatReply(body=wire.reply, leads=wire.leads)
 
-    async def _shared(self, text: str, model: str, tally: _Tally) -> _Shared:
+    async def _shared(
+        self, text: str, model: str, tally: _Tally, tell: ProgressCallback
+    ) -> _Shared:
         """Work out what the links and images in the user's text show.
 
         Linked pages are opened; a link that will not open is looked for another way; images,
         whether linked directly or found on those pages, are each shown to the model.
         """
-        pages = await self._read_links(text, model, tally)
+        pages = await self._read_links(text, model, tally, tell)
         failed = [page.url for page in pages if page.content is None]
         if failed:
-            pages += await self._read_around(failed, model, tally)
+            tell(Progress(JobEventKind.NOTE, "Looking for another way into what would not open"))
+            pages += await self._read_around(failed, model, tally, tell)
         opened = [page.content for page in pages if page.content is not None]
         urls = prompts.image_links([text, *opened])
+        for url in urls:
+            tell(Progress(JobEventKind.NOTE, f"Looking at an image: {url}"))
         described = await asyncio.gather(*(self._look(url, model, tally) for url in urls))
         return _Shared(pages, list(zip(urls, described, strict=True)))
 
-    async def _read_links(self, text: str, model: str, tally: _Tally) -> list[websearch.Fetch]:
+    async def _read_links(
+        self, text: str, model: str, tally: _Tally, tell: ProgressCallback
+    ) -> list[websearch.Fetch]:
         """Open the pages the text links to.
 
         The tool is held to the sites the text itself links to, so that nothing on a page can
@@ -181,6 +204,7 @@ class OpenRouterModelClient:
         sites = prompts.linked_sites(text)
         if not sites:
             return []
+        tell(Progress(JobEventKind.NOTE, "Opening the links in your message"))
         final = await self._run(
             {
                 "model": model,
@@ -193,11 +217,12 @@ class OpenRouterModelClient:
                 ],
             },
             tally,
+            lambda item: _report_steps(item, tell),
         )
         return _fetched(final)[: prompts.MAX_LINKED_PAGES]
 
     async def _read_around(
-        self, links: Sequence[str], model: str, tally: _Tally
+        self, links: Sequence[str], model: str, tally: _Tally, tell: ProgressCallback
     ) -> list[websearch.Fetch]:
         """Look for what unopened links show somewhere else: a mirror, an archive, coverage.
 
@@ -217,6 +242,7 @@ class OpenRouterModelClient:
                     **websearch.REQUEST_FIELDS,
                 },
                 tally,
+                lambda item: _report_steps(item, tell),
             )
         except ModelError:
             return []
@@ -393,6 +419,16 @@ def _raise_if_refused_or_cut_short(response: dict[str, Any]) -> None:
             ErrorKind.REFUSAL, f"The provider's content filter stopped the reply: {said}"
         )
     raise ModelError(ErrorKind.PROVIDER, f"The reply was cut short ({reason}).")
+
+
+def _silent(progress: Progress) -> None:
+    """For callers that are not watching."""
+
+
+def _report_steps(item: dict[str, Any], tell: ProgressCallback) -> None:
+    """Report the searches made and pages opened, leaving out what the model wrote."""
+    if item.get("type") not in ("message", "reasoning"):
+        _report_progress(item, tell)
 
 
 def _report_progress(item: dict[str, Any], on_progress: ProgressCallback) -> None:

@@ -89,12 +89,31 @@ class FakeModelClient:
         self._sleep = sleep
 
     async def decompose(
-        self, text: str, instructions: str, *, count: int, avoid: Sequence[str], model: str
+        self,
+        text: str,
+        instructions: str,
+        *,
+        count: int,
+        avoid: Sequence[str],
+        model: str,
+        on_progress: ProgressCallback | None = None,
     ) -> Decomposition:
+        if on_progress is not None:
+            on_progress(Progress(JobEventKind.NOTE, "Demo: reading what you shared"))
+            await self._sleep(0.7)
+            on_progress(Progress(JobEventKind.NOTE, "Writing the leads"))
+            await self._sleep(0.7)
         fresh = [lead for lead in LEADS if lead not in set(avoid)]
         return Decomposition(title=_title(text), leads=fresh[:count])
 
-    async def converse(self, message: str, context: ChatContext, *, model: str) -> ChatReply:
+    async def converse(
+        self,
+        message: str,
+        context: ChatContext,
+        *,
+        model: str,
+        on_progress: ProgressCallback | None = None,
+    ) -> ChatReply:
         await self._sleep(0.8)
         finished = [note for note in context.leads if note.state == FINISHED]
         lines = [

@@ -22,6 +22,7 @@ from manyminds.core.models import (
     Message,
     MessageRole,
     MessageStatus,
+    MessageStep,
     Report,
     SearchEngine,
     Thread,
@@ -112,6 +113,16 @@ MIGRATIONS: Sequence[str] = (
     UPDATE leads SET message_id = (
         SELECT messages.id FROM messages
         WHERE messages.check_id = leads.check_id AND messages.seq = 2
+    );
+    """,
+    """
+    CREATE TABLE message_steps (
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        detail TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (message_id, seq)
     );
     """,
 )
@@ -233,6 +244,30 @@ class Store:
             for text in leads:
                 self._insert_lead(db, check_id, text, LeadOrigin.GENERATED, reply_id)
         return self.get_check(check_id)
+
+    def open_check(self, *, title: str, source_text: str, instructions: str = "") -> Message:
+        """Save a check with the message that opened it and a reply still to come. Returns
+        that reply."""
+        check_id, stamp = uuid.uuid4().hex, self._stamp()
+        with self._transaction() as db:
+            db.execute(
+                "INSERT INTO checks (id, title, source_text, instructions, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (check_id, title, source_text, instructions, stamp, stamp),
+            )
+            self._insert_message(
+                db, check_id, MessageRole.USER, MessageStatus.COMPLETE, source_text
+            )
+            reply_id = self._insert_message(
+                db, check_id, MessageRole.ASSISTANT, MessageStatus.PENDING, ""
+            )
+        return self.get_message(reply_id)
+
+    def rename_check(self, check_id: str, title: str) -> None:
+        self._write(
+            "UPDATE checks SET title = ?, updated_at = ? WHERE id = ?",
+            (title, self._stamp(), check_id),
+        )
 
     def get_check(self, check_id: str) -> Check:
         row = self._one("SELECT * FROM checks WHERE id = ?", (check_id,), f"check {check_id}")
@@ -559,16 +594,22 @@ class Store:
             )
         return self.get_message(reply_id)
 
-    def finish_message(self, message_id: str, body: str, leads: Sequence[str] = ()) -> Message:
-        """Fill in a reply and list its proposed leads under it, together or not at all."""
+    def finish_message(
+        self,
+        message_id: str,
+        body: str,
+        leads: Sequence[str] = (),
+        origin: LeadOrigin = LeadOrigin.CONVERSATION,
+    ) -> Message:
+        """Fill in a reply and list its leads under it, together or not at all."""
         with self._transaction() as db:
             message = self.get_message(message_id)
             db.execute(
-                "UPDATE messages SET status = ?, body = ? WHERE id = ?",
+                "UPDATE messages SET status = ?, body = ?, error_message = NULL WHERE id = ?",
                 (MessageStatus.COMPLETE, body, message_id),
             )
             for text in leads:
-                self._insert_lead(db, message.check_id, text, LeadOrigin.CONVERSATION, message_id)
+                self._insert_lead(db, message.check_id, text, origin, message_id)
         return self.get_message(message_id)
 
     def fail_message(self, message_id: str, error_message: str) -> Message:
@@ -577,6 +618,35 @@ class Store:
             (MessageStatus.FAILED, error_message, message_id),
         )
         return self.get_message(message_id)
+
+    def reopen_message(self, message_id: str) -> Message:
+        """Mark a failed reply as awaited again, for another attempt."""
+        self._write(
+            "UPDATE messages SET status = ?, error_message = NULL WHERE id = ? AND status = ?",
+            (MessageStatus.PENDING, message_id, MessageStatus.FAILED),
+        )
+        return self.get_message(message_id)
+
+    def add_message_step(self, message_id: str, kind: JobEventKind, detail: str = "") -> None:
+        with self._transaction() as db:
+            (seq,) = db.execute(
+                "SELECT COALESCE(MAX(seq), 0) + 1 FROM message_steps WHERE message_id = ?",
+                (message_id,),
+            ).fetchone()
+            db.execute(
+                "INSERT INTO message_steps (message_id, seq, kind, detail, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (message_id, seq, kind, detail, self._stamp()),
+            )
+
+    def list_message_steps(self, message_id: str, *, after: int = 0) -> list[MessageStep]:
+        """The steps taken for a reply, in order, optionally only those numbered above
+        `after`."""
+        rows = self._all(
+            "SELECT * FROM message_steps WHERE message_id = ? AND seq > ? ORDER BY seq",
+            (message_id, after),
+        )
+        return [MessageStep.model_validate(dict(row)) for row in rows]
 
     def fail_pending_messages(self) -> int:
         """Mark every reply still awaited as stopped. Call once, at start-up."""

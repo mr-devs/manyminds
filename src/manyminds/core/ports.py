@@ -76,10 +76,24 @@ class ModelClient(Protocol):
     """Everything the app asks of a language model. Failures raise ModelError."""
 
     async def decompose(
-        self, text: str, instructions: str, *, count: int, avoid: Sequence[str], model: str
+        self,
+        text: str,
+        instructions: str,
+        *,
+        count: int,
+        avoid: Sequence[str],
+        model: str,
+        on_progress: ProgressCallback | None = None,
     ) -> Decomposition: ...
 
-    async def converse(self, message: str, context: ChatContext, *, model: str) -> ChatReply: ...
+    async def converse(
+        self,
+        message: str,
+        context: ChatContext,
+        *,
+        model: str,
+        on_progress: ProgressCallback | None = None,
+    ) -> ChatReply: ...
 
     async def research(
         self,

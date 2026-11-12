@@ -107,6 +107,8 @@ class JobEventKind(StrEnum):
     READING = "reading"
     SOURCES_FOUND = "sources_found"
     MESSAGE = "message"
+    NOTE = "note"
+    """A step described in the app's own words."""
     WRITING = "writing"
     RETRYING = "retrying"
     FINISHED = "finished"
@@ -198,6 +200,16 @@ class JobEvent(_Record):
     """One entry in a job's transcript: a step, the model's thinking, or what it wrote."""
 
     job_id: str
+    seq: int
+    kind: JobEventKind
+    detail: str
+    created_at: datetime
+
+
+class MessageStep(_Record):
+    """One step taken while a reply was being worked out, such as a page being opened."""
+
+    message_id: str
     seq: int
     kind: JobEventKind
     detail: str
