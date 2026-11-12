@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 
 SEND_KEY = "keydown.enter.exact.prevent"
 """Enter sends; Shift+Enter starts a new line."""
+SEND_UNLESS_COMPOSING = "(event) => { if (!event.isComposing && event.keyCode !== 229) emit() }"
+"""Runs in the browser. An Enter that only confirms a word being composed, as when typing
+Japanese, Chinese or Korean, is not a request to send."""
 
 
 def _follow(
@@ -113,7 +116,7 @@ def home_page(services: Services, checks_changed: Callable[[], object]) -> None:
             ui.navigate.to(f"/check/{check.id}")
 
         button.on_click(generate)
-        composer.on(SEND_KEY, generate)
+        composer.on(SEND_KEY, generate, js_handler=SEND_UNLESS_COMPOSING)
 
 
 # -- check --------------------------------------------------------------------------------
@@ -392,7 +395,7 @@ def check_page(
                 tell("The message could not be sent. Nothing was changed.")
 
         send_button.on_click(send)
-        composer.on(SEND_KEY, send)
+        composer.on(SEND_KEY, send, js_handler=SEND_UNLESS_COMPOSING)
 
         def on_update(event: Update) -> None:
             if isinstance(event, ChatUpdated):

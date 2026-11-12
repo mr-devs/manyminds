@@ -118,7 +118,7 @@ def report_input(
     blocks = []
     for url, title, passages in sources:
         head = f'<source url="{_attribute(url)}" title="{_attribute(title or "")}">'
-        blocks.append(f"{head}\n{as_data(_PASSAGE_GAP.join(passages))}\n</source>")
+        blocks.append(f"{head}\n{as_data(_capped(passages))}\n</source>")
     return (
         f"{_block('lead', lead)}\n\nSearch results:\n"
         + "\n".join(blocks)
@@ -152,8 +152,10 @@ IMAGE_REQUEST = "Describe this image."
 MAX_IMAGES = 4
 MAX_IMAGE_DESCRIPTION_CHARS = 1500
 _IMAGE_ENDINGS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
-_INCIDENTAL = ("profile_images", "avatar", "favicon", "emoji", "/icons/", "logo")
-"""Parts of an address that mark a picture as furniture of the page, not what was shared."""
+_INCIDENTAL = re.compile(
+    r"(^|[/_.-])(profile_images|avatars?|favicon|emoji|icons?|logos?)([/_.-]|$)", re.IGNORECASE
+)
+"""Whole words in an address's path that mark a picture as furniture of the page."""
 
 MAX_LINKED_PAGE_CHARS = 12000
 MAX_LINKED_PAGES = 3
@@ -188,15 +190,36 @@ def linked_sites(text: str) -> list[str]:
     return hosts
 
 
-def image_links(texts: Sequence[str]) -> list[str]:
-    """The first few distinct image addresses found in the given texts."""
-    urls: list[str] = []
-    for text in texts:
-        for url, _, is_image in _links(text):
-            incidental = any(part in url.lower() for part in _INCIDENTAL)
-            if is_image and not incidental and url not in urls:
+def page_links(text: str) -> list[str]:
+    """The pages a text links to, as written, leaving out links to images."""
+    return [url for url, _, is_image in _links(text) if not is_image]
+
+
+def same_page(first: str, second: str) -> bool:
+    """Whether two addresses name the same page, ignoring `www.`, the query and a final slash."""
+
+    def key(url: str) -> tuple[str, str]:
+        parts = urlsplit(url)
+        return (parts.hostname or "").lower().removeprefix("www."), parts.path.rstrip("/")
+
+    return key(first) == key(second)
+
+
+def image_links(text: str, pages: Sequence[str]) -> list[str]:
+    """The first few distinct images to look at: every one the user linked, then those found
+    on the opened pages that are not page furniture such as profile pictures and icons."""
+    urls = [url for url, _, is_image in _links(text) if is_image]
+    for page in pages:
+        for url, _, is_image in _links(page):
+            furniture = _INCIDENTAL.search(urlsplit(url).path) is not None
+            if is_image and not furniture and url not in urls:
                 urls.append(url)
     return urls[:MAX_IMAGES]
+
+
+def _capped(passages: Sequence[str]) -> str:
+    """A source's text for a prompt. A page opened in full is cut to a workable length."""
+    return _PASSAGE_GAP.join(passages)[:MAX_LINKED_PAGE_CHARS]
 
 
 def read_around_input(links: Sequence[str]) -> str:
@@ -278,7 +301,7 @@ def search_findings(notes: str, sources: Sequence[tuple[str, str | None, Sequenc
     """What a search made for this message found: the model's notes and the pages returned."""
     blocks = [
         f'<found url="{_attribute(url)}" title="{_attribute(title or "")}">\n'
-        f"{as_data(_PASSAGE_GAP.join(passages))}\n</found>"
+        f"{as_data(_capped(passages))}\n</found>"
         for url, title, passages in sources
     ]
     return (

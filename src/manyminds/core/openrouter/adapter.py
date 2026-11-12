@@ -75,25 +75,35 @@ class _Tally:
 class _Shared:
     """What the links and images in the user's text turned out to show."""
 
-    fetched: list[websearch.Fetch]
+    unread: list[str]
+    """Links the user wrote that could not be opened."""
+    opened: list[websearch.Fetch]
     images: list[tuple[str, str | None]]
     """(address, description); the description is None if the image could not be looked at."""
 
     @property
     def pages(self) -> list[tuple[str, str | None, str | None]]:
-        return [(page.url, page.title, page.content) for page in self.fetched]
+        unread: list[tuple[str, str | None, str | None]] = [
+            (url, None, None) for url in self.unread
+        ]
+        return unread + [(page.url, page.title, page.content) for page in self.opened]
 
     def seen(self) -> str:
         """A plain account for the user of what was read."""
-        lines = []
-        for page in self.fetched:
-            if page.content is None:
-                lines.append(f"Could not open: {page.url}")
-            else:
-                lines.append(f"Opened: {page.title or 'Untitled page'} ({page.url})")
+        lines = [f"Could not open: {url}" for url in self.unread]
+        lines += [f"Opened: {page.title or 'Untitled page'} ({page.url})" for page in self.opened]
         for url, description in self.images:
             lines.append(f"Image {url}: {description or 'could not be looked at'}")
         return "\n".join(lines)
+
+
+def _opened(pages: Sequence[websearch.Fetch]) -> list[websearch.Fetch]:
+    """The pages that were read, each once."""
+    kept: list[websearch.Fetch] = []
+    for page in pages:
+        if page.content is not None and all(page.url != other.url for other in kept):
+            kept.append(page)
+    return kept
 
 
 def _fetched(response: dict[str, Any]) -> list[websearch.Fetch]:
@@ -224,17 +234,21 @@ class OpenRouterModelClient:
         Linked pages are opened; a link that will not open is looked for another way; images,
         whether linked directly or found on those pages, are each shown to the model.
         """
-        pages = await self._read_links(text, model, tally, tell)
-        failed = [page.url for page in pages if page.content is None]
-        if failed:
+        links = prompts.page_links(text)[: prompts.MAX_LINKED_PAGES]
+        opened = _opened(await self._read_links(text, model, tally, tell))
+        # Judged against what the user wrote, not what the model says it tried: a link it
+        # never tried is still unread, and an address it made up is never passed on.
+        unread = [
+            link for link in links if not any(prompts.same_page(link, page.url) for page in opened)
+        ]
+        if unread:
             tell(Progress(JobEventKind.NOTE, "Looking for another way into what would not open"))
-            pages += await self._read_around(failed, model, tally, tell)
-        opened = [page.content for page in pages if page.content is not None]
-        urls = prompts.image_links([text, *opened])
+            opened = _opened(opened + await self._read_around(unread, model, tally, tell))
+        urls = prompts.image_links(text, [page.content or "" for page in opened])
         for url in urls:
             tell(Progress(JobEventKind.NOTE, f"Looking at an image: {url}"))
         described = await asyncio.gather(*(self._look(url, model, tally) for url in urls))
-        return _Shared(pages, list(zip(urls, described, strict=True)))
+        return _Shared(unread, opened, list(zip(urls, described, strict=True)))
 
     async def _read_links(
         self, text: str, model: str, tally: _Tally, tell: ProgressCallback
@@ -262,7 +276,7 @@ class OpenRouterModelClient:
             tally,
             lambda item: _report_steps(item, tell),
         )
-        return _fetched(final)[: prompts.MAX_LINKED_PAGES]
+        return _fetched(final)
 
     async def _read_around(
         self, links: Sequence[str], model: str, tally: _Tally, tell: ProgressCallback

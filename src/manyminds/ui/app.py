@@ -86,9 +86,18 @@ def build_root(services: Services) -> Callable[[], None]:
             # A check's title arrives after the check does, and checks come and go in other tabs.
             if dialogs.is_deleted:
                 updates.unsubscribe(keep_sidebar_current)
-            elif isinstance(event, ChatUpdated) and listed != [
-                (check.id, check.title) for check in store.list_checks()
-            ]:
+                return
+            if not isinstance(event, ChatUpdated):
+                return
+            try:
+                now: tuple[str, str] | None = (
+                    event.check_id,
+                    store.get_check(event.check_id).title,
+                )
+            except NotFoundError:
+                now = None
+            was = next((entry for entry in listed if entry[0] == event.check_id), None)
+            if now != was:
                 saved_checks.refresh()
 
         theme.sidebar(saved_checks)

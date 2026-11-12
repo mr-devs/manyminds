@@ -143,6 +143,8 @@ class CheckService:
         ]
         if not replies or replies[0].status is not MessageStatus.FAILED:
             raise ValueError("Lead generation has not failed, so there is nothing to try again.")
+        if check_id in self._replying:
+            raise ChatBusyError("Wait for the reply before trying again.")
         check = self.store.get_check(check_id)
         reply = self.store.reopen_message(replies[0].id)
         self._bus.publish(ChatUpdated(check_id=check_id))
@@ -172,12 +174,12 @@ class CheckService:
         title = _squash(decomposition.title)
         if len(title) > MAX_TITLE_LENGTH:
             title = title[: MAX_TITLE_LENGTH - 1].rstrip() + "…"
-        done = self.store.finish_message(
-            reply.id, decomposition.seen.strip(), leads, LeadOrigin.GENERATED
-        )
+        # The title first: if anything fails, no leads are left behind a reply marked failed.
         if title:
             self.store.rename_check(reply.check_id, title)
-        return done
+        return self.store.finish_message(
+            reply.id, decomposition.seen.strip(), leads, LeadOrigin.GENERATED
+        )
 
     def _recorder(self, reply: Message) -> ProgressCallback:
         """Saves each step under the reply and tells whoever is watching."""

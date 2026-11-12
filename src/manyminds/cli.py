@@ -114,14 +114,14 @@ def _run_real(api_key: str, port: int | None, show: bool) -> int:
         return 1
     try:
         store = open_store(folder)
+        # Nothing is running yet, so work still marked as under way was cut off last time.
+        store.interrupt_unfinished_jobs()
+        store.fail_pending_messages()
     except (OSError, sqlite3.Error) as error:
         lock.close()
         database = folder / DATABASE_NAME
         print(BAD_DATABASE.format(database=database, reason=type(error).__name__), file=sys.stderr)
         return 1
-    # Nothing is running yet, so work still marked as under way was cut off last time.
-    store.interrupt_unfinished_jobs()
-    store.fail_pending_messages()
     # The HTTP client lives as long as the process, which ends when the server stops.
     model, _ = build_client(api_key)
     services = build_services(
