@@ -6,10 +6,10 @@ from collections.abc import Callable
 from nicegui import Event, ui
 from nicegui.events import ScrollEventArguments, ValueChangeEventArguments
 
-from manyminds.core.checks import NothingToLaunchError
+from manyminds.core.checks import NothingToLaunchError, TooManyLeadsError
 from manyminds.core.errors import ModelError
 from manyminds.core.events import JobUpdated
-from manyminds.core.models import JobEvent, JobEventKind, Lead
+from manyminds.core.models import JobEvent, JobEventKind, Lead, ThreadStatus
 from manyminds.core.services import Services
 from manyminds.core.storage import NotFoundError
 from manyminds.ui import theme
@@ -41,7 +41,7 @@ def _follow(
 # -- home ---------------------------------------------------------------------------------
 
 
-def home_page(services: Services) -> None:
+def home_page(services: Services, checks_changed: Callable[[], object]) -> None:
     with theme.content(home=True):
         ui.label("What would you like to check?").classes(theme.HEADLINE)
         with ui.column().classes("mm-composer"):
@@ -87,6 +87,7 @@ def home_page(services: Services) -> None:
                 logger.error("Creating a check failed: %s", type(error).__name__)
                 show_problem("Something went wrong and nothing was saved. Please try again.")
             else:
+                checks_changed()
                 ui.navigate.to(f"/check/{check.id}")
             finally:
                 button.enable()
@@ -98,7 +99,29 @@ def home_page(services: Services) -> None:
 # -- check --------------------------------------------------------------------------------
 
 
-def check_page(services: Services, updates: JobUpdates, check_id: str) -> None:
+def _confirm_delete(on_confirm: Callable[[], None]) -> ui.dialog:
+    with ui.dialog() as dialog, ui.card().classes("mm-dialog"):
+        ui.label("Delete this check and its research?").classes("mm-dialog-title")
+        ui.label(
+            "The pasted text, its leads and every report under it are removed from this "
+            "computer. This cannot be undone."
+        ).classes(theme.MUTED)
+        with ui.row().classes("w-full justify-end gap-2 mt-3"):
+            ui.button("Cancel", on_click=dialog.close).props("flat no-caps").classes(theme.QUIET)
+
+            def confirmed() -> None:
+                dialog.close()
+                on_confirm()
+
+            ui.button("Delete", on_click=confirmed).props("unelevated no-caps").classes(
+                theme.BUTTON + " mm-danger"
+            ).mark("confirm-delete")
+    return dialog
+
+
+def check_page(
+    services: Services, updates: JobUpdates, check_id: str, checks_changed: Callable[[], object]
+) -> None:
     store = services.store
     with theme.content() as _, ui.column().classes("gap-0 items-stretch") as page:
         try:
@@ -107,8 +130,27 @@ def check_page(services: Services, updates: JobUpdates, check_id: str) -> None:
             ui.label("This check could not be found.").classes(theme.MUTED)
             return
 
-        ui.label(check.title).classes(theme.TITLE)
-        ui.label(check.source_text).classes(theme.SOURCE)
+        def delete() -> None:
+            try:
+                services.checks.delete_check(check_id)
+            except NotFoundError:
+                pass  # Already deleted from another tab; the outcome is the same.
+            except Exception as error:
+                logger.error("Deleting a check failed: %s", type(error).__name__)
+                tell("This check could not be deleted. Nothing was changed.")
+                return
+            checks_changed()
+            ui.navigate.to("/")
+
+        dialog = _confirm_delete(delete)
+        with ui.row().classes("mm-head"):
+            ui.label(check.title).classes(theme.TITLE)
+            ui.button("Delete check", on_click=dialog.open).props("flat no-caps").classes(
+                theme.QUIET
+            )
+        with ui.column().classes(theme.PANEL):
+            ui.label("Text being checked").classes(theme.LABEL)
+            ui.label(check.source_text).classes(theme.SOURCE)
 
         status_labels: dict[str, ui.label] = {}
 
@@ -128,7 +170,10 @@ def check_page(services: Services, updates: JobUpdates, check_id: str) -> None:
             if not rows:
                 return
             ui.label("Threads").classes(theme.SECTION)
-            with ui.list().classes(theme.RULED):
+            ui.label("One for each lead being researched. Open one to follow its work.").classes(
+                "mm-section-note"
+            )
+            with ui.list().classes("mm-threads"):
                 for index, thread in enumerate(rows):
                     target = f"/check/{check_id}/thread/{thread.id}"
                     with (
@@ -160,16 +205,37 @@ def check_page(services: Services, updates: JobUpdates, check_id: str) -> None:
             tell("This list was out of date and has been refreshed.")
             redraw()
 
+        def add_lead() -> None:
+            try:
+                services.checks.add_lead(check_id)
+            except TooManyLeadsError as error:
+                tell(str(error))
+                return
+            except Exception as error:
+                logger.error("Adding a lead failed: %s", type(error).__name__)
+                tell("The lead could not be added. Nothing was changed.")
+                return
+            notice.set_visibility(False)
+            lead_editor.refresh()
+
         @ui.refreshable
         def lead_editor() -> None:
             drafts = store.list_draft_leads(check_id)
+            if drafts:
+                ui.label("Leads to research").classes(theme.SECTION)
+                ui.label("Edit any lead, remove it, or add your own before starting.").classes(
+                    "mm-section-note"
+                )
+                with ui.column().classes("mm-leads").mark("lead-list"):
+                    for index, lead in enumerate(drafts):
+                        _lead_row(services, lead, index, lead_editor.refresh, stale)
+            ui.button("Add a lead", icon="add", on_click=add_lead).props("flat no-caps").classes(
+                "mm-add"
+            )
             if not drafts:
                 return
-            ui.label("Leads to research").classes(theme.SECTION)
-            with ui.column().classes("gap-0 items-stretch " + theme.RULED).mark("lead-list"):
-                for index, lead in enumerate(drafts):
-                    _lead_row(services, lead, index, lead_editor.refresh, stale)
             with ui.row().classes("mm-launch"):
+                ui.label("Research with").classes("mm-launch-label")
                 picker = (
                     ui.select(list(services.research_models), value=services.research_models[0])
                     .props("outlined dense")
@@ -225,8 +291,9 @@ def _lead_row(
         refresh()
 
     with ui.row().classes("mm-lead").mark(f"lead-row-{index}"):
+        ui.label(str(index + 1)).classes("mm-lead-number")
         (
-            ui.textarea(value=lead.text, on_change=save)
+            ui.textarea(value=lead.text, on_change=save, placeholder="Write a lead to research")
             .props("borderless dense autogrow rows=1")
             .classes("grow mm-field")
         )
@@ -283,10 +350,23 @@ def thread_page(services: Services, updates: JobUpdates, check_id: str, thread_i
 
         ui.link(f"← {check.title}", f"/check/{check_id}").classes("mm-back")
         ui.label(thread.lead_text).classes(theme.TITLE)
+
+        def try_again() -> None:
+            try:
+                services.checks.retry_thread(thread_id)
+            except ValueError:
+                pass  # It is already running again, started from another tab.
+            except Exception as error:
+                logger.error("Trying a thread again failed: %s", type(error).__name__)
+                return
+            catch_up()
+
         with ui.row().classes("items-center gap-3 mt-3"):
             status = theme.status_label(services.checks.thread_status(thread_id))
-            for job in store.list_jobs(thread_id):
-                ui.label(job.model).classes(theme.MUTED)
+            for model in dict.fromkeys(job.model for job in store.list_jobs(thread_id)):
+                ui.label(model).classes(theme.MUTED)
+            again = ui.button("Try again", on_click=try_again).props("flat no-caps")
+            again.classes(theme.QUIET)
 
         shown: dict[str, int] = {}
         """The number of the last transcript entry of each job already on the page."""
@@ -322,7 +402,9 @@ def thread_page(services: Services, updates: JobUpdates, check_id: str, thread_i
                             used = usage_line(job.usage)
                             if used:
                                 ui.label(used).classes(theme.MUTED + " mm-usage").mark("usage")
-            theme.set_status(status, services.checks.thread_status(thread_id))
+            current = services.checks.thread_status(thread_id)
+            theme.set_status(status, current)
+            again.set_visibility(current is ThreadStatus.FAILED)
             if follower.following:
                 area.scroll_to(percent=1.0)
 
