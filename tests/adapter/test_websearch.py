@@ -84,7 +84,7 @@ def test_a_url_seen_as_both_source_and_annotation_is_one_citation_with_the_excer
     ]
 
 
-def test_two_excerpts_for_one_url_are_joined() -> None:
+def test_two_excerpts_for_one_url_are_kept_apart_by_a_break_marker() -> None:
     response = {
         "output": [
             message_item(
@@ -98,7 +98,7 @@ def test_two_excerpts_for_one_url_are_joined() -> None:
     }
 
     assert citations(response) == [
-        Citation("https://a.example/page", "Page A", "first part\nsecond part")
+        Citation("https://a.example/page", "Page A", "first part\n[...]\nsecond part")
     ]
 
 
