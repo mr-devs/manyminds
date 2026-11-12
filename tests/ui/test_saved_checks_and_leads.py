@@ -99,6 +99,7 @@ async def test_a_lead_can_be_added_after_research_has_started(
     with user.scope(marker="lead-row-0"):
         user.find(kind=ui.input).type("One more lead")
     user.find("Go").click()
+    await user.should_see(marker="thread-row-3")
 
     with user.scope(marker="thread-row-3"):
         await user.should_see("One more lead")
