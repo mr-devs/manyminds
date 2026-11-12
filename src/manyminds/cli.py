@@ -121,6 +121,7 @@ def _run_real(api_key: str, port: int | None, show: bool) -> int:
         return 1
     # Nothing is running yet, so work still marked as under way was cut off last time.
     store.interrupt_unfinished_jobs()
+    store.fail_pending_messages()
     # The HTTP client lives as long as the process, which ends when the server stops.
     model, _ = build_client(api_key)
     services = build_services(
