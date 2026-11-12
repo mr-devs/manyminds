@@ -134,6 +134,18 @@ async def test_a_link_in_the_new_message_is_opened_first_and_only_its_site() -> 
     assert "The mayor resigned on Tuesday." in second["input"]
 
 
+async def test_what_a_linked_page_says_reaches_the_model_unaltered() -> None:
+    page = "https://news.example.com/story"
+    words = "Where does the text lead to? Nobody knows."
+    wire = Wire(stream_of(fetch_item(page, "A story", words)), json_reply(REPLY))
+
+    await converse(wire, f"What about this? {page}")
+
+    given = wire.bodies[1]["input"]
+    assert words in given
+    assert "What the links in the new message lead to:" in given
+
+
 async def test_links_in_earlier_turns_and_reports_are_not_opened() -> None:
     wire = Wire(json_reply(REPLY))
     context = ChatContext(

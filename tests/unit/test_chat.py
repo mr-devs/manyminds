@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 
 from manyminds.core import storage
-from manyminds.core.checks import ChatBusyError, CheckService, NothingToLaunchError
+from manyminds.core.checks import (
+    ChatBusyError,
+    CheckBusyError,
+    CheckService,
+    NothingToLaunchError,
+)
 from manyminds.core.errors import ModelError
 from manyminds.core.events import ChatUpdated, EventBus, Update
 from manyminds.core.jobs import JobManager
@@ -19,8 +24,8 @@ from manyminds.core.models import (
     MessageStatus,
 )
 from manyminds.core.ports import ChatContext, LeadNote, PastTurn
-from manyminds.core.storage import Store
-from support import RecordingModel, report_for, until
+from manyminds.core.storage import NotFoundError, Store
+from support import Faults, RecordingModel, report_for, until
 
 TEXT = "The bridge opened in 1932 and was the longest in the world."
 
@@ -395,3 +400,89 @@ def test_a_version_two_database_gains_a_conversation_for_each_check(tmp_path: Pa
         ("l3", other_reply.id)
     ]
     store.close()
+
+
+# -- found in review -----------------------------------------------------------------------
+
+
+async def test_a_lead_from_a_later_message_is_researched_with_that_message_too(
+    service: CheckService, store: Store, model: RecordingModel, jobs: JobManager
+) -> None:
+    model.leads = ["Lead A"]
+    check = await service.create_check(TEXT)
+    model.proposed = ["The tunnel opened in 1950."]
+    await service.send(check.id, "Also check this: the tunnel opened in 1950.")
+    model.proposed = ["Who dug the tunnel?"]
+    await service.send(check.id, "Anything else?")
+    first, second, third = store.list_leads(check.id)
+
+    service.launch_lead(second.id, ["vendor/model-a"])
+    service.launch_lead(first.id, ["vendor/model-a"])
+    service.launch_lead(third.id, ["vendor/model-a"])
+    await jobs.wait_until_idle()
+
+    given = {call["lead"]: call["source_text"] for call in model.research_calls}
+    assert given == {
+        "Lead A": TEXT,
+        "The tunnel opened in 1950.": TEXT + "\n\nAlso check this: the tunnel opened in 1950.",
+        "Who dug the tunnel?": (
+            TEXT + "\n\nAlso check this: the tunnel opened in 1950.\n\nAnything else?"
+        ),
+    }
+
+
+async def test_a_proposed_lead_that_repeats_one_already_started_is_dropped(
+    service: CheckService, store: Store, model: RecordingModel, jobs: JobManager
+) -> None:
+    model.leads = ["Lead A"]
+    check = await service.create_check(TEXT)
+    service.launch_lead(store.list_leads(check.id)[0].id, ["vendor/model-a"])
+    await jobs.wait_until_idle()
+    model.proposed = ["LEAD  a", "Lead Z"]
+
+    await service.send(check.id, "More?")
+
+    assert [lead.text for lead in store.list_leads(check.id)] == ["Lead A", "Lead Z"]
+
+
+async def test_a_reply_that_cannot_be_saved_does_not_block_the_conversation(
+    service: CheckService, store: Store, model: RecordingModel, faults: Faults, bus: EventBus
+) -> None:
+    check = await service.create_check(TEXT)
+    seen: list[Update] = []
+    bus.subscribe(seen.append)
+    faults.fail("UPDATE messages", times=2)  # saving the reply, then saving its failure
+
+    await service.send(check.id, "First.")
+    again = await service.send(check.id, "Second.")
+
+    assert again.status is MessageStatus.COMPLETE
+    assert len(seen) == 4
+
+
+async def test_a_check_cannot_be_deleted_while_a_reply_is_awaited(
+    service: CheckService, store: Store, model: RecordingModel
+) -> None:
+    import asyncio
+
+    model.hold_reply = True
+    check = await service.create_check(TEXT)
+    waiting = asyncio.create_task(service.send(check.id, "Summarise."))
+    await until(lambda: len(model.converse_calls) == 1)
+
+    with pytest.raises(CheckBusyError, match="A reply is still being written"):
+        service.delete_check(check.id)
+
+    model.release_reply()
+    await waiting
+    service.delete_check(check.id)
+    assert store.list_checks() == []
+
+
+async def test_a_message_to_a_check_that_is_gone_is_refused(
+    service: CheckService, model: RecordingModel
+) -> None:
+    with pytest.raises(NotFoundError):
+        await service.send("no-such-check", "Hello?")
+
+    assert model.converse_calls == []
