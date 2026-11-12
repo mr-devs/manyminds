@@ -299,7 +299,7 @@ async def test_before_replying_the_model_may_search_and_open_pages() -> None:
         "openrouter:web_search",
         "openrouter:web_fetch",
     ]
-    assert "engine" not in look_up["tools"][0]["parameters"]  # the app's setting, here auto
+    assert look_up["tools"][0]["parameters"]["engine"] == "auto"  # the app's setting
     assert "text" not in look_up
     assert "<user_message>\nWho paid for it?\n</user_message>" in look_up["input"]
     assert "Records agree the bridge opened in March 1932." in look_up["input"]
