@@ -43,6 +43,8 @@ class RecordingModel:
     leads: Sequence[str] = ("First lead", "Second lead")
     decompose_error: Exception | None = None
     failures: dict[str, Exception] = field(default_factory=dict)
+    reports: dict[str, Report] = field(default_factory=dict)
+    """Reports to return for particular leads, in place of the default one."""
     hold: bool = False
     """When true, each research call waits until the test calls release()."""
 
@@ -107,6 +109,6 @@ class RecordingModel:
             await asyncio.sleep(0)
             if lead in self.failures:
                 raise self.failures[lead]
-            return ResearchResult(report=report_for(lead))
+            return ResearchResult(report=self.reports.get(lead) or report_for(lead))
         finally:
             self.active -= 1
