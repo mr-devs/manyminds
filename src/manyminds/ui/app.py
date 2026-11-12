@@ -40,7 +40,7 @@ def build_root(services: Services) -> Callable[[], None]:
         pages.thread_page(services, updates, check_id, thread_id)
 
     def root() -> None:
-        theme.apply_colours()
+        theme.apply()
         theme.sidebar()
         ui.sub_pages(
             {

@@ -16,13 +16,11 @@ GROUPS = (
 
 
 def _evidence_item(item: EvidenceItem) -> None:
-    with ui.column().classes("gap-1 border-l-4 border-slate-200 pl-4 py-1"):
-        ui.label(item.quote).classes(theme.BODY + " italic")
-        ui.link(item.title or item.url, item.url, new_tab=True).classes(
-            "text-sm text-sky-800 break-all"
-        )
+    with ui.column().classes("mm-evidence"):
+        ui.label(item.quote).classes(theme.QUOTE)
+        ui.link(item.title or item.url, item.url, new_tab=True).classes(theme.LINK)
         if not item.grounded:
-            ui.label("Not found in search results").classes("text-xs font-medium text-amber-700")
+            ui.label("Not found in search results").classes("mm-flag")
 
 
 def report_view(report: Report) -> None:
@@ -35,10 +33,11 @@ def report_view(report: Report) -> None:
     for stance, heading, marker in GROUPS:
         items = [item for item in report.evidence if item.stance is stance]
         if items:
-            with ui.column().classes("gap-3 items-stretch").mark(marker):
+            with ui.column().classes("gap-0 items-stretch").mark(marker):
                 ui.label(heading).classes(theme.SECTION)
-                for item in items:
-                    _evidence_item(item)
+                with ui.column().classes("gap-0 items-stretch " + theme.RULED):
+                    for item in items:
+                        _evidence_item(item)
 
     ui.label("Could not be determined").classes(theme.SECTION)
     ui.label(report.undetermined).classes(theme.BODY)

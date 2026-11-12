@@ -37,21 +37,27 @@ def _follow(
 
 
 def home_page(services: Services) -> None:
-    with theme.content():
-        ui.label("What would you like to check?").classes(theme.HEADING + " text-center mt-16")
-        composer = (
-            ui.textarea(placeholder="Paste a claim or a piece of text")
-            .props("outlined autogrow rounded input-class=min-h-24")
-            .classes("w-full text-base")
-            .mark("composer")
-        )
-        instructions = (
-            ui.input(placeholder="Optional instructions, such as specific leads to pursue")
-            .props("outlined dense rounded")
-            .classes("w-full")
-            .mark("instructions")
-        )
-        problem = ui.label().classes("text-sm text-rose-700")
+    with theme.content(home=True):
+        ui.label("What would you like to check?").classes(theme.HEADLINE)
+        with ui.column().classes("mm-composer"):
+            composer = (
+                ui.textarea(placeholder="Paste a claim or a piece of text")
+                .props("borderless autogrow")
+                .classes("w-full mm-field")
+                .mark("composer")
+            )
+            with ui.row().classes("mm-composer-foot items-center no-wrap gap-3"):
+                instructions = (
+                    ui.input(placeholder="Add instructions, such as leads to pursue (optional)")
+                    .props("borderless dense")
+                    .classes("grow mm-field mm-instructions")
+                    .mark("instructions")
+                )
+                spinner = ui.spinner(size="sm", color="grey-6")
+                spinner.set_visibility(False)
+                button = ui.button("Generate leads").props("unelevated no-caps")
+                button.classes(theme.BUTTON)
+        problem = ui.label().classes(theme.ERROR + " text-center")
         problem.set_visibility(False)
 
         def show_problem(message: str) -> None:
@@ -76,10 +82,7 @@ def home_page(services: Services) -> None:
                 button.enable()
                 spinner.set_visibility(False)
 
-        with ui.row().classes("items-center justify-end gap-3"):
-            spinner = ui.spinner(size="sm")
-            spinner.set_visibility(False)
-            button = ui.button("Generate leads", on_click=generate).props("unelevated rounded")
+        button.on_click(generate)
 
 
 # -- check --------------------------------------------------------------------------------
@@ -87,15 +90,15 @@ def home_page(services: Services) -> None:
 
 def check_page(services: Services, updates: JobUpdates, check_id: str) -> None:
     store = services.store
-    with theme.content() as _, ui.column().classes("gap-3 items-stretch") as page:
+    with theme.content() as _, ui.column().classes("gap-0 items-stretch") as page:
         try:
             check = store.get_check(check_id)
         except NotFoundError:
             ui.label("This check could not be found.").classes(theme.MUTED)
             return
 
-        ui.label(check.title).classes(theme.HEADING)
-        ui.label(check.source_text).classes(theme.BODY + " bg-slate-50 rounded-xl p-4")
+        ui.label(check.title).classes(theme.TITLE)
+        ui.label(check.source_text).classes(theme.SOURCE)
 
         status_labels: dict[str, ui.label] = {}
 
@@ -112,16 +115,17 @@ def check_page(services: Services, updates: JobUpdates, check_id: str) -> None:
             if not rows:
                 return
             ui.label("Threads").classes(theme.SECTION)
-            with ui.list().props("bordered separator").classes("rounded-xl"):
+            with ui.list().classes(theme.RULED):
                 for index, thread in enumerate(rows):
                     target = f"/check/{check_id}/thread/{thread.id}"
                     with (
                         ui.item(on_click=lambda target=target: ui.navigate.to(target))
                         .props("clickable")
+                        .classes("mm-thread")
                         .mark(f"thread-row-{index}")
                     ):
                         with ui.item_section():
-                            ui.label(thread.lead_text).classes("text-slate-800")
+                            ui.label(thread.lead_text).classes("mm-thread-text")
                         with ui.item_section().props("side"):
                             status_labels[thread.id] = theme.status_label(
                                 services.checks.thread_status(thread.id)
@@ -146,13 +150,14 @@ def check_page(services: Services, updates: JobUpdates, check_id: str) -> None:
             if not drafts:
                 return
             ui.label("Leads to research").classes(theme.SECTION)
-            for index, lead in enumerate(drafts):
-                _lead_row(services, lead, index, emptied, lead_editor.refresh, stale)
-            with ui.row().classes("items-center justify-between mt-2"):
+            with ui.column().classes("gap-0 items-stretch " + theme.RULED):
+                for index, lead in enumerate(drafts):
+                    _lead_row(services, lead, index, emptied, lead_editor.refresh, stale)
+            with ui.row().classes("mm-launch"):
                 picker = (
                     ui.select(list(services.research_models), value=services.research_models[0])
-                    .props("outlined dense rounded")
-                    .classes("min-w-64")
+                    .props("outlined dense")
+                    .classes("mm-picker")
                     .mark("model-picker")
                 )
 
@@ -174,10 +179,10 @@ def check_page(services: Services, updates: JobUpdates, check_id: str) -> None:
                     lead_editor.refresh()
                     threads.refresh()
 
-                ui.button("Go", on_click=go).props("unelevated rounded")
+                ui.button("Go", on_click=go).props("unelevated no-caps").classes(theme.BUTTON)
 
         lead_editor()
-        notice = ui.label().classes("text-sm text-amber-700")
+        notice = ui.label().classes(theme.NOTICE)
         notice.set_visibility(False)
         threads()
         _follow(updates, page, lambda event: event.check_id == check_id, update_status)
@@ -211,11 +216,16 @@ def _lead_row(
             return
         refresh()
 
-    with ui.row().classes("items-center gap-2 w-full no-wrap").mark(f"lead-row-{index}"):
-        ui.input(value=lead.text, on_change=save).props("outlined dense rounded").classes("grow")
+    with ui.row().classes("mm-lead").mark(f"lead-row-{index}"):
+        (
+            ui.textarea(value=lead.text, on_change=save)
+            .props("borderless dense autogrow rows=1")
+            .classes("grow mm-field")
+        )
         (
             ui.button(icon="close", on_click=remove)
-            .props('flat round dense aria-label="Remove lead"')
+            .props('flat round dense size=sm aria-label="Remove lead"')
+            .classes("mm-icon")
             .mark("remove-lead")
         )
 
@@ -239,7 +249,7 @@ def _progress_line(event: JobEvent) -> str:
 
 def thread_page(services: Services, updates: JobUpdates, check_id: str, thread_id: str) -> None:
     store = services.store
-    with theme.content() as _, ui.column().classes("gap-3 items-stretch") as page:
+    with theme.content() as _, ui.column().classes("gap-0 items-stretch") as page:
         try:
             check = store.get_check(check_id)
             thread = store.get_thread(thread_id)
@@ -247,14 +257,15 @@ def thread_page(services: Services, updates: JobUpdates, check_id: str, thread_i
             ui.label("This thread could not be found.").classes(theme.MUTED)
             return
 
-        ui.link(f"← {check.title}", f"/check/{check_id}").classes(
-            "text-sm text-slate-600 no-underline hover:underline"
-        )
-        ui.label(thread.lead_text).classes(theme.HEADING)
+        ui.link(f"← {check.title}", f"/check/{check_id}").classes("mm-back")
+        ui.label(thread.lead_text).classes(theme.TITLE)
 
         @ui.refreshable
         def body() -> None:
-            theme.status_label(services.checks.thread_status(thread_id))
+            with ui.row().classes("items-center gap-3 mt-3"):
+                theme.status_label(services.checks.thread_status(thread_id))
+                for job in store.list_jobs(thread_id):
+                    ui.label(job.model).classes(theme.MUTED)
             for job in store.list_jobs(thread_id):
                 _job_view(services, job)
 
@@ -264,15 +275,14 @@ def thread_page(services: Services, updates: JobUpdates, check_id: str, thread_i
 
 def _job_view(services: Services, job: Job) -> None:
     store = services.store
-    ui.label(job.model).classes(theme.MUTED)
     report = store.get_report(job.id)
     if report is not None:
         report_view(report)
         return
-    with ui.column().classes("gap-1"):
+    with ui.column().classes("mm-progress"):
         for event in store.list_job_events(job.id):
             ui.label(_progress_line(event)).classes(theme.MUTED)
     if job.status is JobStatus.FAILED and job.error_message:
-        ui.label(job.error_message).classes("text-sm text-rose-700")
+        ui.label(job.error_message).classes(theme.ERROR)
     elif job.status in (JobStatus.QUEUED, JobStatus.RUNNING):
-        ui.spinner(type="dots", size="md")
+        ui.spinner(type="dots", size="md", color="grey-5").classes("mt-3")
