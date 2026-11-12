@@ -42,6 +42,24 @@ LEADS: Sequence[str] = (
     "Are there official statements that address this directly?",
 )
 FAILING_LEAD = LEADS[3]
+
+THINKING = """\
+Demo thinking. A real model's reasoning would appear here as it works.
+The lead to look into is: {lead}
+A sensible first step is to find who said it first and where.
+After that, look for records made at the time that could confirm or contradict it.
+If the first search is thin, try again with different wording."""
+
+SOURCES = """\
+Demo source A: https://example.org/demo/{slug}/a
+  A placeholder passage standing in for what a search result would say.
+Demo source B: https://example.org/demo/{slug}/b
+  A second placeholder passage, this one pointing the other way."""
+
+NOTES = """\
+Demo notes. Here a real model would write up what it found before filing its report.
+One source supports the lead and one cuts against it.
+Neither settles the matter, and the report below says what remains unknown."""
 TITLE_LENGTH = 40
 
 Sleep = Callable[[float], Awaitable[None]]
@@ -80,15 +98,17 @@ class FakeModelClient:
     ) -> ResearchResult:
         # Each lead takes its own, repeatable amount of time so threads finish out of order.
         step = 0.4 + (zlib.crc32(lead.encode()) % 20) / 10
+        slug = _slug(lead)
+        on_progress(Progress(JobEventKind.THINKING, THINKING.format(lead=lead)))
         on_progress(Progress(JobEventKind.SEARCHING, lead))
         await self._sleep(step)
-        on_progress(Progress(JobEventKind.SOURCES_FOUND, "2 sources"))
+        on_progress(Progress(JobEventKind.SOURCES_FOUND, SOURCES.format(slug=slug)))
         await self._sleep(step)
         if lead == FAILING_LEAD:
             raise ModelError(ErrorKind.PROVIDER, "Demo failure: this lead is scripted to fail.")
+        on_progress(Progress(JobEventKind.MESSAGE, NOTES))
         on_progress(Progress(JobEventKind.WRITING))
         await self._sleep(step / 2)
-        slug = _slug(lead)
         report = Report(
             summary=f"Demo report for the lead “{lead}”. No real search was run.",
             evidence=[

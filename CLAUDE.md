@@ -58,14 +58,18 @@ Every behaviour change follows this cycle.
    test first. Show the owner the failing output. A new test that passes immediately is a
    defect in the test.
 3. **Commit the failing tests on their own**, with the prefix `test:`.
-4. **Green.** Write the smallest implementation that passes. Do not edit, weaken, skip or
-   delete tests to get to green. Do not special-case test inputs. If a test seems wrong, stop
-   and ask the owner.
+4. **Green.** Write the smallest implementation that passes. Do not special-case test inputs.
+   Never weaken, skip or delete a test just to get to green.
 5. **Refactor** with the tests green, then commit. Keep structural and behavioural changes in
    separate commits.
 6. **Independent check.** At the end of each milestone, a fresh read-only subagent that has not
    seen the implementation work reviews the diff against the spec for two things: code that
    overfits the tests, and spec behaviour the tests do not cover. Tell it to skip style.
+
+**Changing tests.** Tests may be edited without asking: when a requirement changes, when a
+test is wrong, or when its mechanics are faulty (a missing wait, a bad type annotation). Make
+the change in a `test:` commit, before the implementation change where one is needed, and say
+in the report to the owner which tests changed and why.
 
 Supporting rules:
 
@@ -86,9 +90,8 @@ Supporting rules:
 Mechanical checks (do not disable them):
 
 - `scripts/check_commits.py`: a `test:` commit may only touch `tests/`. Any other commit may
-  not modify, rename or delete existing files under `tests/`. A test change the owner has
-  approved uses the prefix `test-fix:` and includes a line starting `Approved:` saying what
-  was approved.
+  not modify, rename or delete existing files under `tests/`. So every change to the tests is
+  its own commit, apart from the code it tests.
 - `scripts/pytest_strict_gate.py`: the run fails on any skipped or expected-failure test whose
   reason does not start with `JUSTIFIED:`.
 - Spike code lives in `spikes/`, is never imported by `src/`, and is exempt from the cycle.
@@ -97,5 +100,5 @@ Mechanical checks (do not disable them):
 ## Commits
 
 Small commits with clear messages. Prefixes: `test:`, `feat:`, `fix:`, `refactor:`, `docs:`,
-`chore:`, `ci:`, `test-fix:`. Commit messages describe the change and nothing else: no
+`chore:`, `ci:`. Commit messages describe the change and nothing else: no
 tool, assistant or session attribution of any kind.

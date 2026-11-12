@@ -427,8 +427,6 @@ Differences from this plan, for the record:
   milestone 1b makes the real one usable.
 - **Deferred to the milestone that needs them:** the on-disk data directory and NiceGUI
   storage location (3), `Job.usage` (1b), lead `dismissed` state and `source_message_id` (9).
-- **Waiting on you:** three lines in committed tests fail strict type checking although they
-  run correctly. Fixing them means editing tests, which needs your approval.
 
 ### Milestone 1b: real research through OpenRouter
 
@@ -613,8 +611,10 @@ fail at TDD (see references) adds the following.
    the test. I show you the failing output. A new test that passes
    immediately is a defect in the test.
 3. **Commit the failing tests** alone (`test: ...`).
-4. **Green.** Smallest implementation. No editing, weakening, skipping or deleting tests. No
-   special-casing of test inputs. If a test looks wrong, I stop and ask you.
+4. **Green.** Smallest implementation. No special-casing of test inputs, and no weakening,
+   skipping or deleting a test just to get to green. Tests that are wrong, or that pin a
+   requirement you have changed, are edited in their own `test:` commit and reported to you
+   (your decision of 2026-11-11; no pre-approval is needed).
 5. **Refactor** on green, then commit (`refactor: ...`), separately from behaviour changes.
 6. **Milestone review** by a fresh, read-only subagent that has not seen the implementation
    work. It gets the spec section and the diff, and is asked two things: does the code overfit
@@ -629,8 +629,8 @@ fail at TDD (see references) adds the following.
 
 **Mechanical enforcement** (kept deliberately small)
 - `scripts/check_commits.py`, run in CI and locally: a `test:` commit may only touch `tests/`;
-  any other commit may not modify or delete existing test files. A test change you have
-  approved uses the prefix `test-fix:` and names the approval in the message.
+  any other commit may not modify or delete existing test files. Every change to the tests is
+  therefore its own commit.
 - The skip/xfail gate: CI fails on any skipped or expected-failure test whose reason does not
   begin with `JUSTIFIED:`.
 - The default suite blocks network access; a test that opens a socket fails.

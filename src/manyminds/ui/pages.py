@@ -11,7 +11,7 @@ from manyminds.core.models import JobEvent, JobEventKind, Lead
 from manyminds.core.services import Services
 from manyminds.core.storage import NotFoundError
 from manyminds.ui import theme
-from manyminds.ui.follow import is_at_end
+from manyminds.ui.follow import Follower
 from manyminds.ui.report_view import report_view
 
 JobUpdates = Event[JobUpdated]
@@ -285,15 +285,16 @@ def thread_page(services: Services, updates: JobUpdates, check_id: str, thread_i
         """How many transcript entries of each job are already on the page."""
         concluded: set[str] = set()
         """Jobs whose report is already on the page."""
-        following = True
+        follower = Follower()
 
         def on_scroll(event: ScrollEventArguments) -> None:
-            nonlocal following
-            following = is_at_end(
+            # Reported both when the user scrolls and when the transcript grows.
+            if follower.moved(
                 position=event.vertical_position,
                 size=event.vertical_size,
                 container=event.vertical_container_size,
-            )
+            ):
+                area.scroll_to(percent=1.0)
 
         area = ui.scroll_area(on_scroll=on_scroll).classes("mm-transcript")
         with area:
@@ -313,7 +314,7 @@ def thread_page(services: Services, updates: JobUpdates, check_id: str, thread_i
                         with ui.column().classes("mm-report"):
                             report_view(report)
             theme.set_status(status, services.checks.thread_status(thread_id))
-            if following:
+            if follower.following:
                 area.scroll_to(percent=1.0)
 
         catch_up()
