@@ -95,7 +95,7 @@ class FakeModelClient:
                 EvidenceItem(
                     url=f"https://example.org/demo/{slug}/a",
                     title="Demo source A",
-                    quote="A placeholder passage standing in for a quotation that supports the lead.",
+                    quote="A placeholder passage standing in for a quotation supporting the lead.",
                     stance=Stance.SUPPORTS,
                     grounded=True,
                 ),
