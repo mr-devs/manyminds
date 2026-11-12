@@ -67,3 +67,45 @@ async def test_research_returns_a_report_with_sources_the_search_returned(
     assert any(item.grounded for item in result.report.evidence)
     assert result.usage.searches >= 1
     assert result.usage.cost > 0
+
+
+async def test_the_conversation_answers_from_a_report_and_can_propose_leads(
+    client: OpenRouterModelClient,
+) -> None:
+    from manyminds.core.models import EvidenceItem, MessageRole, Report, Stance
+    from manyminds.core.ports import ChatContext, LeadNote, PastTurn
+
+    report = Report(
+        summary="NASA says the wall is not visible to the naked eye from low Earth orbit.",
+        evidence=[
+            EvidenceItem(
+                url="https://www.nasa.gov/great-wall",
+                title="Great Wall",
+                quote="The Great Wall is difficult or impossible to see from Earth orbit.",
+                stance=Stance.UNDERMINES,
+                grounded=True,
+            )
+        ],
+        undetermined="Whether any astronaut has photographed it unaided.",
+    )
+    context = ChatContext(
+        turns=(PastTurn(MessageRole.USER, TEXT),),
+        leads=(
+            LeadNote(
+                "The Great Wall is visible from space with the naked eye.", "finished", (report,)
+            ),
+            LeadNote("The Great Wall is more than 21,000 kilometres long.", "not started"),
+        ),
+    )
+
+    reply = await client.converse(
+        "Summarise what has been found so far, and suggest one more lead about who first "
+        "made the claim.",
+        context,
+        model=MODEL,
+    )
+
+    print(reply)
+    assert reply.body.strip()
+    assert "nasa" in reply.body.lower()
+    assert 1 <= len(reply.leads) <= 5
