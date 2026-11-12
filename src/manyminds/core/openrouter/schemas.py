@@ -34,6 +34,11 @@ class WireDecomposition(_Wire):
     leads: list[NonBlank]
 
 
+class WireChatReply(_Wire):
+    reply: str
+    leads: list[str]
+
+
 REPORT_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -64,6 +69,17 @@ DECOMPOSITION_SCHEMA: dict[str, Any] = {
     "required": ["title", "leads"],
     "properties": {
         "title": {"type": "string"},
+        "leads": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+
+CHAT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["reply", "leads"],
+    "properties": {
+        "reply": {"type": "string"},
         "leads": {"type": "array", "items": {"type": "string"}},
     },
 }

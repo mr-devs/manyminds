@@ -20,14 +20,23 @@ from manyminds.core.models import (
 )
 from manyminds.core.openrouter import websearch
 from manyminds.core.openrouter.schemas import (
+    CHAT_SCHEMA,
     DECOMPOSITION_SCHEMA,
     REPORT_SCHEMA,
+    WireChatReply,
     WireDecomposition,
     WireReport,
     text_format,
 )
 from manyminds.core.openrouter.transport import Transport
-from manyminds.core.ports import Decomposition, Progress, ProgressCallback, ResearchResult
+from manyminds.core.ports import (
+    ChatContext,
+    ChatReply,
+    Decomposition,
+    Progress,
+    ProgressCallback,
+    ResearchResult,
+)
 from manyminds.core.safety import quote_in_passages, url_key
 
 _Wire = TypeVar("_Wire", bound=BaseModel)
@@ -79,6 +88,38 @@ class OpenRouterModelClient:
             body, "decomposition", DECOMPOSITION_SCHEMA, WireDecomposition, tally
         )
         return Decomposition(title=wire.title, leads=wire.leads[:count])
+
+    async def converse(self, message: str, context: ChatContext, *, model: str) -> ChatReply:
+        """Answer in the main conversation. The call has no tools; only links the user put
+        in this message are opened first."""
+        tally = _Tally()
+        pages = await self._read_links(message, model, tally)
+        leads = [
+            (
+                note.text,
+                note.state,
+                [
+                    prompts.report_lines(
+                        report.summary,
+                        [
+                            (item.stance.value, item.url, item.quote, item.grounded)
+                            for item in report.evidence
+                        ],
+                        report.undetermined,
+                    )
+                    for report in note.reports
+                ],
+            )
+            for note in context.leads
+        ]
+        turns = [(turn.role.value, turn.body) for turn in context.turns]
+        body = {
+            "model": model,
+            "instructions": prompts.CHAT_INSTRUCTIONS,
+            "input": prompts.chat_input(message, turns, leads, pages),
+        }
+        wire = await self._structured(body, "chat_reply", CHAT_SCHEMA, WireChatReply, tally)
+        return ChatReply(body=wire.reply, leads=wire.leads)
 
     async def _read_links(
         self, text: str, model: str, tally: _Tally
