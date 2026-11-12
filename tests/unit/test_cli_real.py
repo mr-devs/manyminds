@@ -176,3 +176,24 @@ def test_starting_marks_work_cut_off_last_time_as_interrupted(
 
     job = served["services"].store.get_job(jobs[0].id)
     assert job.error_kind is ErrorKind.INTERRUPTED
+
+
+def test_starting_marks_a_reply_cut_off_last_time_as_stopped(
+    served: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from manyminds.core.models import MessageStatus
+    from manyminds.core.paths import open_store
+
+    earlier = open_store(tmp_path / "data")
+    check = earlier.create_check_with_leads(
+        title="T", source_text="Some text.", instructions="", leads=["Lead A"]
+    )
+    awaited = earlier.begin_turn(check.id, "Summarise.")
+    earlier.close()
+    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+
+    cli.main([])
+
+    reply = served["services"].store.get_message(awaited.id)
+    assert reply.status is MessageStatus.FAILED
+    assert reply.error_message == "Stopped because the app was closed."
