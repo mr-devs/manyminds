@@ -199,9 +199,9 @@ async def test_leads_proposed_in_a_reply_wait_as_drafts_and_start_nothing(
 async def test_proposed_leads_stop_at_the_limit(
     service: CheckService, store: Store, model: RecordingModel
 ) -> None:
-    model.leads = [f"Lead {n}" for n in range(10)]
+    model.leads = [f"Lead {n}" for n in range(5)]
     check = await service.create_check(TEXT)
-    for _ in range(13):
+    for _ in range(18):
         service.add_lead(check.id)
     model.proposed = ["New one", "New two", "New three"]
 

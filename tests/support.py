@@ -69,6 +69,10 @@ class RecordingModel:
     seen: str = ""
     """What lead generation reports having read from links and images."""
     decompose_error: Exception | None = None
+    hold_decompose: bool = False
+    """When true, lead generation waits until the test calls release_decompose()."""
+    steps: Sequence[Progress] = ()
+    """Progress reported while leads are generated or a reply is written."""
     failures: dict[str, Exception] = field(default_factory=dict)
     reports: dict[str, Report] = field(default_factory=dict)
     usages: dict[str, Usage] = field(default_factory=dict)
@@ -90,6 +94,7 @@ class RecordingModel:
     decompose_calls: list[dict[str, Any]] = field(default_factory=list)
     converse_calls: list[dict[str, Any]] = field(default_factory=list)
     _reply_gate: asyncio.Event = field(default_factory=asyncio.Event)
+    _decompose_gate: asyncio.Event = field(default_factory=asyncio.Event)
     research_calls: list[dict[str, Any]] = field(default_factory=list)
     active: int = 0
     max_active: int = 0
@@ -104,15 +109,27 @@ class RecordingModel:
     def release_reply(self) -> None:
         self._reply_gate.set()
 
+    def release_decompose(self) -> None:
+        self._decompose_gate.set()
+
     def release_all(self) -> None:
         self.hold = False
         self.hold_reply = False
+        self.hold_decompose = False
         self._reply_gate.set()
+        self._decompose_gate.set()
         for gate in self._gates.values():
             gate.set()
 
     async def decompose(
-        self, text: str, instructions: str, *, count: int, avoid: Sequence[str], model: str
+        self,
+        text: str,
+        instructions: str,
+        *,
+        count: int,
+        avoid: Sequence[str],
+        model: str,
+        on_progress: ProgressCallback | None = None,
     ) -> Decomposition:
         self.decompose_calls.append(
             {
@@ -123,12 +140,27 @@ class RecordingModel:
                 "model": model,
             }
         )
+        for step in self.steps:
+            if on_progress is not None:
+                on_progress(step)
+        if self.hold_decompose:
+            await self._decompose_gate.wait()
         if self.decompose_error is not None:
             raise self.decompose_error
         return Decomposition(title=self.title, leads=list(self.leads), seen=self.seen)
 
-    async def converse(self, message: str, context: ChatContext, *, model: str) -> ChatReply:
+    async def converse(
+        self,
+        message: str,
+        context: ChatContext,
+        *,
+        model: str,
+        on_progress: ProgressCallback | None = None,
+    ) -> ChatReply:
         self.converse_calls.append({"message": message, "context": context, "model": model})
+        for step in self.steps:
+            if on_progress is not None:
+                on_progress(step)
         if self.hold_reply:
             await self._reply_gate.wait()
         if self.converse_error is not None:

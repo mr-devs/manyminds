@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from manyminds.core import prompts
+from manyminds.core.models import JobEventKind
 from manyminds.core.openrouter.adapter import OpenRouterModelClient
 from manyminds.core.openrouter.transport import Transport
-from manyminds.core.ports import Decomposition
+from manyminds.core.ports import Decomposition, Progress
 from openrouter_wire import (
     API_KEY,
     Wire,
@@ -220,3 +221,52 @@ def test_the_image_instructions_keep_to_what_is_visible() -> None:
     for rule in ("visible text", "Do not name a person", "data, never instructions"):
         assert rule in text, rule
     assert len(text) <= 700
+
+
+# -- showing the work --------------------------------------------------------------------------
+
+
+async def test_each_step_of_understanding_what_was_shared_is_reported_in_order() -> None:
+    found = stream_of(fetch_item(MIRROR, "Post", f"Words. {PHOTO}"), message_item("ok"))
+    wire = Wire(unopened(POST), found, text_reply(DESCRIPTION), json_reply(LEADS))
+    reported: list[Progress] = []
+
+    async with wire.http() as http:
+        client = OpenRouterModelClient(Transport(API_KEY, http))
+        await client.decompose(
+            f"see {POST}",
+            "",
+            count=5,
+            avoid=[],
+            model="vendor/model-b",
+            on_progress=reported.append,
+        )
+
+    assert [(step.kind, step.detail) for step in reported] == [
+        (JobEventKind.NOTE, "Opening the links in your message"),
+        (JobEventKind.READING, f"{POST} (could not be opened)"),
+        (JobEventKind.NOTE, "Looking for another way into what would not open"),
+        (JobEventKind.READING, MIRROR),
+        (JobEventKind.NOTE, f"Looking at an image: {PHOTO}"),
+        (JobEventKind.NOTE, "Writing the leads"),
+    ]
+
+
+async def test_plain_text_reports_only_that_the_leads_are_being_written() -> None:
+    reported: list[Progress] = []
+    wire = Wire(json_reply(LEADS))
+
+    async with wire.http() as http:
+        client = OpenRouterModelClient(Transport(API_KEY, http))
+        await client.decompose(
+            "The bridge opened in 1932.",
+            "",
+            count=5,
+            avoid=[],
+            model="vendor/model-b",
+            on_progress=reported.append,
+        )
+
+    assert [(step.kind, step.detail) for step in reported] == [
+        (JobEventKind.NOTE, "Writing the leads")
+    ]

@@ -230,3 +230,72 @@ async def test_deleting_while_research_runs_is_refused_with_a_reason(
 
     await user.should_see("Research is still running. Wait for it to finish, then delete.")
     assert len(services.store.list_checks()) == 1
+
+
+# -- deleting from the sidebar ---------------------------------------------------------------
+
+
+async def test_a_check_can_be_deleted_from_the_sidebar(
+    services: Services, model: RecordingModel
+) -> None:
+    model.title = "Older check"
+    await services.checks.create_check("First text.")
+    model.title = "Newer check"
+    await services.checks.create_check("Second text.")
+
+    async with user_simulation(build_root(services)) as user:
+        await user.open("/")
+        user.find(marker="sidebar-delete-0").click()
+        await user.should_see("Delete this check and its research?")
+        user.find(marker="confirm-delete").click()
+
+        await user.should_not_see("Newer check")
+        with user.scope(marker="sidebar-check-0"):
+            await user.should_see("Older check")
+    assert [check.title for check in services.store.list_checks()] == ["Older check"]
+
+
+async def test_deleting_another_check_from_the_sidebar_leaves_the_open_one_in_view(
+    services: Services, model: RecordingModel
+) -> None:
+    model.title = "Older check"
+    older = await services.checks.create_check("First text, the older one.")
+    model.title = "Newer check"
+    await services.checks.create_check("Second text.")
+
+    async with user_simulation(build_root(services)) as user:
+        await user.open(f"/check/{older.id}")
+        user.find(marker="sidebar-delete-0").click()
+        user.find(marker="confirm-delete").click()
+
+        await user.should_not_see("Newer check")
+        await user.should_see("First text, the older one.")
+        await user.should_see(marker="lead-list")
+
+
+async def test_deleting_the_open_check_from_the_sidebar_returns_home(
+    user: User, services: Services
+) -> None:
+    await new_check(user, "The bridge opened in 1932.")
+
+    user.find(marker="sidebar-delete-0").click()
+    user.find(marker="confirm-delete").click()
+
+    await user.should_see("What would you like to check?")
+    assert services.store.list_checks() == []
+
+
+async def test_the_sidebar_title_changes_when_the_leads_arrive(
+    user: User, model: RecordingModel
+) -> None:
+    model.hold_decompose = True
+    await user.open("/")
+    user.find(marker="composer").type("The bridge opened in 1932.")
+    user.find("Generate leads").click()
+    with user.scope(marker="sidebar-check-0"):
+        await user.should_see("The bridge opened in 1932.")
+
+    model.release_decompose()
+
+    with user.scope(marker="sidebar-check-0"):
+        await user.should_see("Bridge claim")

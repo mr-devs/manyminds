@@ -68,7 +68,7 @@ async def test_generating_with_no_text_asks_for_some(user: User, model: Recordin
     assert model.decompose_calls == []
 
 
-async def test_failed_lead_generation_says_why_and_stays_on_home(
+async def test_failed_lead_generation_says_why_in_the_conversation_and_can_be_retried(
     user: User, model: RecordingModel, services: Services
 ) -> None:
     model.decompose_error = ModelError(ErrorKind.RATE_LIMIT, "Too many requests")
@@ -77,9 +77,16 @@ async def test_failed_lead_generation_says_why_and_stays_on_home(
 
     user.find("Generate leads").click()
 
-    await user.should_see("Too many requests")
-    await user.should_see(marker="composer")
-    assert services.store.list_checks() == []
+    await user.should_see(marker="user-message", content=TEXT)
+    await user.should_see("Leads could not be generated: Too many requests")
+    await user.should_not_see(marker="lead-list")
+    assert len(services.store.list_checks()) == 1
+
+    model.decompose_error = None
+    user.find("Try again").click()
+
+    await user.should_see(marker="lead-list")
+    await user.should_not_see("Leads could not be generated: Too many requests")
 
 
 async def test_there_are_no_checkboxes_in_the_lead_list(user: User) -> None:

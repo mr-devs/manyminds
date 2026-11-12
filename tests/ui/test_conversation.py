@@ -326,3 +326,73 @@ async def test_what_was_read_from_links_is_shown_above_the_leads_as_plain_text(
     await user.should_see(kind=ui.label, content="Opened: <b>A post</b> (https://mirror.example/p)")
     await user.should_see("Leads worth researching. Start any of them, reword them, or leave them.")
     assert lead_boxes(user) == ["Lead A", "Lead B", "Lead C"]
+
+
+# -- generating leads in the open ------------------------------------------------------------
+
+
+async def test_generating_leads_moves_into_the_conversation_at_once(
+    user: User, model: RecordingModel
+) -> None:
+    model.hold_decompose = True
+    await user.open("/")
+    user.find(marker="composer").type(TEXT)
+
+    user.find("Generate leads").click()
+
+    await user.should_see(marker="user-message", content=TEXT)
+    await user.should_see("Working out what to research")
+    await user.should_see("Send")
+    await user.should_not_see(marker="lead-list")
+
+    model.release_decompose()
+    await user.should_see(marker="lead-list")
+    await user.should_not_see("Working out what to research")
+
+
+async def test_the_steps_taken_appear_as_they_happen_and_stay_afterwards(
+    user: User, model: RecordingModel
+) -> None:
+    from manyminds.core.models import JobEventKind
+    from manyminds.core.ports import Progress
+
+    model.hold_decompose = True
+    model.steps = [
+        Progress(JobEventKind.NOTE, "Opening the links in your message"),
+        Progress(JobEventKind.READING, "https://a.example/<b>p</b>"),
+        Progress(JobEventKind.SEARCHING, "the post elsewhere"),
+    ]
+    await user.open("/")
+    user.find(marker="composer").type(TEXT)
+    user.find("Generate leads").click()
+
+    await user.should_see("Opening the links in your message")
+    await user.should_see(kind=ui.label, content="Reading: https://a.example/<b>p</b>")
+    await user.should_see("Searching: the post elsewhere")
+    await user.should_not_see(marker="lead-list")
+
+    model.release_decompose()
+    await user.should_see(marker="lead-list")
+    await user.should_see("How these leads were made")
+    await user.should_see("Reading: https://a.example/<b>p</b>")
+
+
+async def test_a_step_reported_while_the_page_is_open_is_added_without_redrawing(
+    user: User, model: RecordingModel, services: Services
+) -> None:
+    from manyminds.core.events import ChatUpdated
+    from manyminds.core.models import JobEventKind
+
+    model.hold_decompose = True
+    await user.open("/")
+    user.find(marker="composer").type(TEXT)
+    user.find("Generate leads").click()
+    await user.should_see("Working out what to research")
+    check_id = only_check_id(services)
+    reply = services.store.list_messages(check_id)[1]
+
+    services.store.add_message_step(reply.id, JobEventKind.NOTE, "A later step")
+    services.bus.publish(ChatUpdated(check_id=check_id))
+
+    await user.should_see("A later step")
+    await user.should_see("Working out what to research")

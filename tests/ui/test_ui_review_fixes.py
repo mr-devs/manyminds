@@ -137,7 +137,7 @@ async def test_go_on_a_lead_removed_elsewhere_refreshes_the_list(
 async def test_a_check_that_cannot_be_saved_says_so(
     user: User, services: Services, faults: Faults
 ) -> None:
-    faults.fail("INTO leads", times=None)
+    faults.fail("INTO checks", times=None)
     await user.open("/")
     user.find(marker="composer").type(TEXT)
 
