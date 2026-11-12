@@ -42,4 +42,5 @@ async def test_only_the_unmatched_quote_is_flagged(user: User, model: RecordingM
     await user.should_see("A passage nobody can find.")
     flags = user.find("Quote not found in the search result")
     assert len(flags.elements) == 1
+    assert len(user.find("Quote not checked against the source").elements) == 1
     await user.should_not_see("Not found in search results")

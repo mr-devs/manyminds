@@ -56,8 +56,8 @@ def test_citations_from_an_exa_search_have_url_title_and_excerpt() -> None:
             "No, You Can\u2019t See the Great Wall of China from Space | Scientific American",
         ),
     ]
-    assert found[1].excerpt is not None
-    assert "difficult or impossible to see from Earth orbit" in found[1].excerpt
+    assert len(found[1].passages) == 1
+    assert "difficult or impossible to see from Earth orbit" in found[1].passages[0]
 
 
 def test_citations_from_a_native_search_are_urls_without_excerpts() -> None:
@@ -67,7 +67,7 @@ def test_citations_from_a_native_search_are_urls_without_excerpts() -> None:
     assert "https://eol.jsc.nasa.gov/FAQ/default.htm" in urls
     assert "https://en.wikipedia.org/wiki/Great_Wall_of_China" in urls
     assert len(urls) == len(set(urls))
-    assert all(c.excerpt is None and c.title is None for c in found)
+    assert all(c.passages == () and c.title is None for c in found)
 
 
 def test_a_url_seen_as_both_source_and_annotation_is_one_citation_with_the_excerpt() -> None:
@@ -79,12 +79,12 @@ def test_a_url_seen_as_both_source_and_annotation_is_one_citation_with_the_excer
     }
 
     assert citations(response) == [
-        Citation("https://a.example/page", "Page A", "some text"),
-        Citation("https://b.example/page", None, None),
+        Citation("https://a.example/page", "Page A", ("some text",)),
+        Citation("https://b.example/page", None, ()),
     ]
 
 
-def test_two_excerpts_for_one_url_are_kept_apart_by_a_break_marker() -> None:
+def test_two_excerpts_for_one_url_are_kept_as_separate_passages() -> None:
     response = {
         "output": [
             message_item(
@@ -98,7 +98,7 @@ def test_two_excerpts_for_one_url_are_kept_apart_by_a_break_marker() -> None:
     }
 
     assert citations(response) == [
-        Citation("https://a.example/page", "Page A", "first part\n[...]\nsecond part")
+        Citation("https://a.example/page", "Page A", ("first part", "second part"))
     ]
 
 

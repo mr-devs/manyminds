@@ -14,7 +14,7 @@ from manyminds.core.models import ErrorKind, JobStatus, SearchEngine
 from manyminds.core.openrouter.adapter import OpenRouterModelClient
 from manyminds.core.openrouter.transport import Transport
 from manyminds.core.ports import Decomposition, ResearchResult
-from manyminds.core.safety import quote_in_excerpt
+from manyminds.core.safety import quote_in_passages
 from manyminds.core.services import build_services
 from manyminds.core.storage import Store
 from openrouter_wire import (
@@ -236,12 +236,12 @@ async def test_a_quote_inside_either_excerpt_still_matches() -> None:
 
 
 @pytest.mark.parametrize("quote", ["the", "in March", '"', "1932"])
-def test_a_quote_too_short_to_mean_anything_does_not_match(quote: str) -> None:
-    assert quote_in_excerpt(quote, EXCERPT) is False
+def test_a_quote_too_short_to_identify_a_passage_is_left_unchecked(quote: str) -> None:
+    assert quote_in_passages(quote, (EXCERPT,)) is None
 
 
 def test_a_quote_of_reasonable_length_matches() -> None:
-    assert quote_in_excerpt("opened to traffic in March 1932", EXCERPT) is True
+    assert quote_in_passages("opened to traffic in March 1932", (EXCERPT,)) is True
 
 
 async def test_an_excerpt_survives_the_same_page_listed_again_without_one() -> None:
