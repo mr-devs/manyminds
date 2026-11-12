@@ -41,7 +41,8 @@ merge through a pull request.
     and `openrouter:web_fetch` tools (decision 17).
   - Retrieved text is data, never instructions. Model output never starts work by itself.
     The one exception is the user's own message, which holds both the material and their
-    requests (decision 18); the calls that read it as requests have no search tool.
+    requests (decision 18). The conversation may search before it replies (decision 20);
+    calls that produce structured output never have tools.
   - Show model text as plain text only (`ui.label`, `ui.input`, `ui.link`): never `ui.html`,
     `ui.markdown`, `.props()` or JavaScript. Links are http or https only.
   - Bind to `127.0.0.1` only, with `reload=False`.

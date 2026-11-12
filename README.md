@@ -20,8 +20,10 @@ agent, which runs alongside the others and writes a focused report of quoted, li
 evidence. Open any thread to see what its agent searched for and found.
 
 The conversation continues underneath. Ask it to summarise what the threads found or to
-suggest further leads. It answers from the finished reports and cannot search for itself, so
-anything new has to go through a lead that you choose to start.
+suggest further leads. It answers from the finished reports first, and can run a quick web
+search of its own when they do not hold the answer; it says which is which. What it finds
+that way is not checked as strictly as a report's evidence, so start a lead for anything that
+matters.
 
 manyminds gathers evidence for you to judge. It does not issue verdicts on what is true. Each
 piece of evidence links to its source, and is flagged when the link or the quote could not be
@@ -53,8 +55,8 @@ check it. A description guides what is researched; it is never counted as eviden
 not watched, and a link that needs these extra steps can cost a few cents.
 
 What you paste and what you ask for share one box, so the app cannot tell a request you
-typed from one hidden in text you pasted. The steps that read that box can only open the
-links in it and suggest leads; they cannot search or start research.
+typed from one hidden in text you pasted. Such text could steer what the conversation
+searches for or opens. It cannot start research or change anything you have saved.
 
 Research agents search the web and open pages, which can contain text written to mislead a
 model. What they read is treated as material to examine and their output is checked against a

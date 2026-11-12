@@ -25,7 +25,7 @@ beneath them, for example to summarise what the research threads found.
   own Go, which starts that lead only, with the model chosen beside the message box. A
   started lead stays where it is and becomes the way into its thread, with a live status.
   "Research all" under a list starts every lead in it that has text.
-- **The chat model has no search.** It is given the conversation so far, every lead with how
+- *(Changed by decision 20: the conversation may now search.)* **The chat model has no search.** It is given the conversation so far, every lead with how
   far its research has got, and the finished reports. It answers from the reports only, with
   no verdict. When an answer needs research that has not been done, it proposes leads, which
   appear as rows like any others. Nothing a model writes starts work.

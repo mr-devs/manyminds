@@ -529,6 +529,7 @@ milestones 8 and 9 in a different shape.
   kept afterwards under "How these leads were made". A failed attempt stays in the
   conversation with **Try again**.
 - A check opens with five leads at most. A check can be deleted from the sidebar.
+- The conversation may search the web before it replies (decision 20).
 - **Not done:** recording the cost of chat replies; retrying a failed reply with one press
   (send the message again); choosing the chat model (it is the lead-generation model);
   "Generate more leads" as a button (ask for more in the chat).
