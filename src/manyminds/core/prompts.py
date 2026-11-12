@@ -72,13 +72,15 @@ CHAT_INSTRUCTIONS = (
     "You are the main conversation in a research tool. The user shared material to check. "
     "Separate research threads look into leads about it, and their finished reports are "
     "given to you. Answer the user's new message.\n\n"
-    "When it asks about the research, draw only on the reports. Say which lead each point "
-    "comes from and give the source's URL. Say plainly when the reports do not cover "
-    "something, when sources conflict, and when a lead has not finished or has failed. "
+    "Draw first on the reports: say which lead each point comes from and give the source's "
+    "URL. Say plainly when the reports do not cover something, when sources conflict, and "
+    "when a lead has not finished or has failed. Search notes, when given, come from a new "
+    "search made just now for this message. You may use them, but mark each such point as "
+    "from the new search, not from the reports, and give its URL. Use no other knowledge. "
     "Do not give a verdict, rating or confidence on whether anything is true: describe what "
     "the evidence shows and leave the judgement to the user.\n\n"
-    "You cannot search the web yourself. When an answer needs research that has not been "
-    "done, or the user asks for leads or shares new material, propose leads in `leads`: each "
+    "When an answer needs more research than that, or the user asks for leads or shares new "
+    "material, propose leads in `leads`: each "
     "one a single checkable point that stands on its own, worded neutrally, and not a repeat "
     "of a lead already listed. Proposed leads start nothing; the user decides which to "
     "research. Otherwise leave `leads` empty.\n\n"
@@ -257,6 +259,34 @@ def decompose_input(
     return "\n\n".join(parts) + _owner_instructions(instructions)
 
 
+CHAT_SEARCH_INSTRUCTIONS = (
+    "You are the main conversation in a research tool, about to answer the user's new "
+    "message. You are given the conversation, the leads being researched and their finished "
+    "reports. First decide whether a good answer needs facts that these do not hold. If it "
+    "does not, reply with exactly: NO SEARCH NEEDED\n\n"
+    "If it does, search the web and open the most relevant pages, preferring primary sources, "
+    "then write notes: for each useful source its URL, its title, its date if known, and a "
+    "short passage copied exactly from the search result or the page. Say what you could not "
+    "find. Keep to a few searches; deeper work belongs in a lead. Do not answer the user yet. "
+    "Do not give a verdict on whether anything is true. The user's earlier turns are also the "
+    "user speaking. " + _MESSAGE_RULE
+)
+NO_SEARCH = "NO SEARCH NEEDED"
+
+
+def search_findings(notes: str, sources: Sequence[tuple[str, str | None, Sequence[str]]]) -> str:
+    """What a search made for this message found: the model's notes and the pages returned."""
+    blocks = [
+        f'<found url="{_attribute(url)}" title="{_attribute(title or "")}">\n'
+        f"{as_data(_PASSAGE_GAP.join(passages))}\n</found>"
+        for url, title, passages in sources
+    ]
+    return (
+        "Notes from a new web search made just now for this message:\n"
+        f"{_block('search_notes', notes)}\nThe pages it returned:\n" + "\n".join(blocks)
+    )
+
+
 def report_lines(summary: str, evidence: Sequence[tuple[str, str, str, bool]], unknown: str) -> str:
     """A finished report written out for the chat model. Evidence is (stance, url, quote,
     grounded)."""
@@ -274,6 +304,7 @@ def chat_input(
     leads: Sequence[tuple[str, str, Sequence[str]]],
     pages: Sequence[tuple[str, str | None, str | None]] = (),
     images: Sequence[tuple[str, str | None]] = (),
+    findings: str = "",
 ) -> str:
     """`turns` are (role, body); `leads` are (text, state, reports as written out lines)."""
     parts = []
@@ -292,6 +323,8 @@ def chat_input(
         parts.append(_linked_pages(pages, "the new message"))
     if images:
         parts.append(_images(images))
+    if findings:
+        parts.append(findings)
     parts.append(f"The user's new message:\n{_block('user_message', message)}")
     return "\n\n".join(parts)
 

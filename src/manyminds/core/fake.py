@@ -112,6 +112,7 @@ class FakeModelClient:
         context: ChatContext,
         *,
         model: str,
+        search: SearchEngine = SearchEngine.EXA,
         on_progress: ProgressCallback | None = None,
     ) -> ChatReply:
         await self._sleep(0.8)

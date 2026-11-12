@@ -140,12 +140,17 @@ class OpenRouterModelClient:
         context: ChatContext,
         *,
         model: str,
+        search: SearchEngine = SearchEngine.EXA,
         on_progress: ProgressCallback | None = None,
     ) -> ChatReply:
-        """Answer in the main conversation. The call has no tools; only links the user put
-        in this message are opened first."""
+        """Answer in the main conversation.
+
+        Links in the message are opened first. Then the model may search the web, in a call
+        of its own. The reply itself is written by a call with a fixed format and no tools.
+        """
         tally = _Tally()
-        shared = await self._shared(message, model, tally, on_progress or _silent)
+        tell = on_progress or _silent
+        shared = await self._shared(message, model, tally, tell)
         leads = [
             (
                 note.text,
@@ -165,13 +170,51 @@ class OpenRouterModelClient:
             for note in context.leads
         ]
         turns = [(turn.role.value, turn.body) for turn in context.turns]
+        given = prompts.chat_input(message, turns, leads, shared.pages, shared.images)
+        findings = await self._look_up(given, model, search, tally, tell)
         body = {
             "model": model,
             "instructions": prompts.CHAT_INSTRUCTIONS,
-            "input": prompts.chat_input(message, turns, leads, shared.pages, shared.images),
+            "input": prompts.chat_input(
+                message, turns, leads, shared.pages, shared.images, findings
+            ),
         }
         wire = await self._structured(body, "chat_reply", CHAT_SCHEMA, WireChatReply, tally)
         return ChatReply(body=wire.reply, leads=wire.leads)
+
+    async def _look_up(
+        self, given: str, model: str, search: SearchEngine, tally: _Tally, tell: ProgressCallback
+    ) -> str:
+        """Let the model search for what the reports do not hold. Returns what it found,
+        written out for the call that replies, or nothing if it did not search.
+
+        A failed search does not cost the user their reply: it is said so, and the reply is
+        written from the reports.
+        """
+        try:
+            found = await self._run(
+                {
+                    "model": model,
+                    "instructions": prompts.CHAT_SEARCH_INSTRUCTIONS,
+                    "input": given,
+                    "tools": [websearch.tool_entry(search), websearch.fetch_tool_entry()],
+                    **websearch.REQUEST_FIELDS,
+                },
+                tally,
+                lambda item: _report_steps(item, tell),
+            )
+        except ModelError:
+            tell(
+                Progress(
+                    JobEventKind.NOTE, "The web search failed, so the reply uses the reports only"
+                )
+            )
+            return ""
+        cited = websearch.citations(found)
+        notes = _text(found).strip()
+        if not cited or not notes or notes == prompts.NO_SEARCH:
+            return ""
+        return prompts.search_findings(notes, [(c.url, c.title, c.passages) for c in cited])
 
     async def _shared(
         self, text: str, model: str, tally: _Tally, tell: ProgressCallback

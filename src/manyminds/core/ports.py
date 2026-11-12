@@ -92,6 +92,7 @@ class ModelClient(Protocol):
         context: ChatContext,
         *,
         model: str,
+        search: SearchEngine = SearchEngine.EXA,
         on_progress: ProgressCallback | None = None,
     ) -> ChatReply: ...
 

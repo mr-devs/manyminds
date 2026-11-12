@@ -315,7 +315,11 @@ class CheckService:
     async def _reply(self, reply: Message, body: str, context: ChatContext) -> Message:
         check_id = reply.check_id
         answer = await self._model.converse(
-            body, context, model=self._chat_model, on_progress=self._recorder(reply)
+            body,
+            context,
+            model=self._chat_model,
+            search=self._search_engine,
+            on_progress=self._recorder(reply),
         )
         room = MAX_LEADS - len(self.store.list_draft_leads(check_id))
         leads = _unique_leads(
