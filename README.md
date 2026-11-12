@@ -1,8 +1,8 @@
 # manyminds
 
 **Status: early alpha.** The core loop works on real models: paste text, get leads, research
-them in parallel, read cited reports. Nothing is saved between runs yet, and settings,
-conversations and key storage are still to come. See
+them in parallel, read cited reports, and come back to saved checks later. Settings,
+conversations about the evidence and key storage are still to come. See
 [`PLAN.md`](https://github.com/mr-devs/manyminds/blob/main/PLAN.md) for what is done and what is
 next.
 
@@ -28,12 +28,23 @@ Orchestration is local; inference is not. Text you paste is sent to OpenRouter, 
 provider behind each model you choose, and to the [Exa](https://exa.ai) search engine, which
 runs the web searches. The app listens on localhost only.
 
+Checks are saved on your computer only, in your user data folder (on macOS,
+`~/Library/Application Support/manyminds`), in a file only your account can read. Set
+`MANYMINDS_DATA_DIR` to keep them somewhere else. Deleting a check in the app removes its
+text, leads and reports from that file.
+
 Your API key is read from the `OPENROUTER_API_KEY` environment variable. It is never written to
 disk, logged or printed. Storing it in the operating system's keychain is planned.
 
-Research agents read web pages, which can contain text written to mislead a model. They are
-given a search tool and nothing else, and their output is checked against a fixed format, but
-no defence here is complete: read the sources yourself.
+If the text you paste contains links, the app opens them (through OpenRouter and Exa, not from
+your computer) so that leads can be drawn from what they say. For a YouTube link that is the
+video's title and transcript.
+
+Research agents search the web and open pages, which can contain text written to mislead a
+model. What they read is treated as material to examine and their output is checked against a
+fixed format, but no defence here is complete: a page could in principle steer an agent into
+opening an address that carries part of your text with it. Read the sources yourself, and do
+not paste anything you would not want sent to these services.
 
 ## Run
 

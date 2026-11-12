@@ -4,7 +4,9 @@ Untrusted text (pasted text, search results, a model's own notes) is always pass
 `as_data` and placed inside a tagged block in the input, never in the instructions.
 """
 
+import re
 from collections.abc import Sequence
+from urllib.parse import urlsplit
 
 from manyminds.core.safety import as_data
 
@@ -14,11 +16,16 @@ _DATA_RULE = (
 )
 
 SEARCH_INSTRUCTIONS = (
-    "You research one lead using web search. Search for sources that bear on the lead, "
-    "including ones that cut against it. Then write notes on what the sources say: for each "
-    "useful source give its URL, its title, a short passage copied exactly from the search "
-    "result, and whether the passage supports or undermines the lead. Say what you could not "
-    "find out. Do not give a verdict or a rating on whether the lead is true. " + _DATA_RULE
+    "You research one lead using web search, and you can open a page to read it in full. "
+    "Search for sources that bear on the lead, including ones that cut against it, and open "
+    "the most relevant ones. Look for more than one independent source, and prefer primary "
+    "ones (official records, original documents, direct statements, the original post or "
+    "footage) over reports about them. Trace a claim to where it first appeared when you "
+    "can. Note the date of each source, and say so when sources disagree or all repeat a "
+    "single origin. Then write notes on what the sources say: for each useful source give "
+    "its URL, its title, a short passage copied exactly from the search result or the page, "
+    "and whether the passage supports or undermines the lead. Say what you could not find "
+    "out. Do not give a verdict or a rating on whether the lead is true. " + _DATA_RULE
 )
 
 REPORT_INSTRUCTIONS = (
@@ -29,10 +36,25 @@ REPORT_INSTRUCTIONS = (
 )
 
 DECOMPOSE_INSTRUCTIONS = (
-    "You read a piece of text and list the specific, checkable leads in it that are worth "
-    "researching, most important first. Each lead is one self-contained sentence that can be "
-    "understood without the original text. Also give a short title for the text. Do not judge "
-    "whether any lead is true. " + _DATA_RULE
+    "You help a careful reader decide what to verify in a piece of text, usually a news "
+    "report, a social media post, or a description of a video or image. List the leads worth "
+    "researching, most important first, and give the text a short neutral title.\n\n"
+    "Claim leads test what the text asserts. Each one:\n"
+    "- is a checkable statement of fact (an event, figure, quotation, attribution, cause or "
+    "comparison), not an opinion, prediction or value judgement;\n"
+    "- makes one claim, so a sentence that asserts two things becomes two leads;\n"
+    "- can stand on its own: it names who, what, when and where, with no pronouns or "
+    "references back to the text;\n"
+    "- is faithful to the text: it keeps the original's strength, scope and figures.\n\n"
+    "Context leads establish what the text is and where it came from. Include the ones that "
+    "matter here: when and where the event happened; who first reported or posted it, and "
+    "what the original said; whether an image, video or quotation is older than, or from a "
+    "different event than, the text implies; what earlier events or coverage a reader needs "
+    "in order to understand it; what relevant facts the text leaves out.\n\n"
+    "Put first the leads the text's argument rests on and those that would matter most if "
+    "wrong, such as ones about health, safety, money, rights or a person's reputation. Leave "
+    "out trivia and common knowledge. Word each lead neutrally, as something to examine. "
+    "Do not judge whether any lead is true. " + _DATA_RULE
 )
 
 _PASSAGE_GAP = "\n[...]\n"
@@ -73,8 +95,62 @@ def report_input(
     )
 
 
-def decompose_input(text: str, instructions: str, count: int, avoid: Sequence[str]) -> str:
-    parts = [f"Give at most {count} leads.", _block("pasted_text", text)]
+READ_INSTRUCTIONS = (
+    "Someone has shared text that contains links. Open each link in the shared text, and "
+    "nothing else, so that what it says can be examined. Then say in a sentence or two what "
+    "each one is. " + _DATA_RULE
+)
+
+MAX_LINKED_PAGE_CHARS = 12000
+MAX_LINKED_PAGES = 3
+_LINK = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_TRAILING = ".,;:!?)]}'\""
+
+
+def linked_sites(text: str) -> list[str]:
+    """The hosts of the web links in a text, each once, in order of first appearance."""
+    hosts: list[str] = []
+    for match in _LINK.finditer(text):
+        try:
+            host = urlsplit(match.group().rstrip(_TRAILING)).hostname
+        except ValueError:
+            continue
+        if host and host not in hosts:
+            hosts.append(host)
+    return hosts
+
+
+def read_input(text: str) -> str:
+    return _block("shared_text", text)
+
+
+def _linked_pages(pages: Sequence[tuple[str, str | None, str | None]]) -> str:
+    """Blocks for the pages behind the links: (url, title, content), content None if unread."""
+    blocks = []
+    for url, title, content in pages[:MAX_LINKED_PAGES]:
+        head = f'<linked_page url="{_attribute(url)}" title="{_attribute(title or "")}">'
+        body = (
+            as_data(content[:MAX_LINKED_PAGE_CHARS])
+            if content is not None
+            else "This link could not be opened."
+        )
+        blocks.append(f"{head}\n{body}\n</linked_page>")
+    return "What the links in the text lead to:\n" + "\n".join(blocks)
+
+
+def decompose_input(
+    text: str,
+    instructions: str,
+    count: int,
+    avoid: Sequence[str],
+    pages: Sequence[tuple[str, str | None, str | None]] = (),
+) -> str:
+    parts = [
+        f"Give at most {count} leads. Fewer is better than padding the list.",
+        _block("pasted_text", text),
+    ]
+    if pages:
+        parts.append(_linked_pages(pages))
     if avoid:
         listed = _block("existing_leads", "\n".join(f"- {lead}" for lead in avoid))
         parts.append(f"Do not repeat or rephrase these leads, which are already listed:\n{listed}")

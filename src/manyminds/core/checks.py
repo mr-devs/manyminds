@@ -9,6 +9,8 @@ from manyminds.core.models import (
     ErrorKind,
     Job,
     JobStatus,
+    Lead,
+    LeadOrigin,
     SearchEngine,
     Thread,
     ThreadStatus,
@@ -17,11 +19,22 @@ from manyminds.core.ports import ModelClient
 from manyminds.core.storage import Store
 
 INITIAL_LEADS = 10
+MAX_LEADS = 25
+"""The most leads waiting in one list. Launched leads no longer count."""
 TITLE_LENGTH = 60
+MAX_TITLE_LENGTH = 120
 
 
 class NothingToLaunchError(ValueError):
     """There are no draft leads left, for example because another tab launched them."""
+
+
+class CheckBusyError(ValueError):
+    """The check still has research under way."""
+
+
+class TooManyLeadsError(ValueError):
+    """The list of leads waiting to be researched is full."""
 
 
 def _squash(text: str) -> str:
@@ -78,10 +91,27 @@ class CheckService:
         leads = _unique_leads(decomposition.leads, INITIAL_LEADS)
         if not leads:
             raise ModelError(ErrorKind.INVALID_OUTPUT, "No leads could be generated for this text.")
-        title = decomposition.title.strip() or _squash(text)[:TITLE_LENGTH]
+        title = _squash(decomposition.title) or _squash(text)[:TITLE_LENGTH]
+        if len(title) > MAX_TITLE_LENGTH:
+            title = title[: MAX_TITLE_LENGTH - 1].rstrip() + "…"
         return self.store.create_check_with_leads(
             title=title, source_text=text, instructions=instructions, leads=leads
         )
+
+    def delete_check(self, check_id: str) -> None:
+        """Delete a check and its research. Refused while any of that research is running,
+        because a running job cannot be stopped and would go on being paid for."""
+        if self.store.count_unfinished_jobs(check_id):
+            raise CheckBusyError("Research is still running. Wait for it to finish, then delete.")
+        self.store.delete_check(check_id)
+
+    def add_lead(self, check_id: str) -> Lead:
+        """Add an empty lead for the user to fill in."""
+        if len(self.store.list_draft_leads(check_id)) >= MAX_LEADS:
+            raise TooManyLeadsError(
+                f"A list holds {MAX_LEADS} leads at most. Research these, then add the rest."
+            )
+        return self.store.add_lead(check_id, "", LeadOrigin.MANUAL)
 
     def update_lead(self, lead_id: str, text: str) -> None:
         """Save a draft lead's wording. It may be left empty, but then it cannot be launched."""
@@ -109,6 +139,29 @@ class CheckService:
         for job in jobs:
             self.jobs.start(job.id)
         return threads
+
+    def retry_thread(self, thread_id: str) -> list[Job]:
+        """Run a failed thread again, once for each model whose latest attempt failed."""
+        latest: dict[str, Job] = {}
+        for job in self.store.list_jobs(thread_id):
+            if job.model not in latest or job.attempt >= latest[job.model].attempt:
+                latest[job.model] = job
+        failed = [job for job in latest.values() if job.status is JobStatus.FAILED]
+        if not failed:
+            raise ValueError("This thread has not failed, so there is nothing to try again.")
+        again = [
+            self.store.create_job(
+                thread_id,
+                model=job.model,
+                search_engine=job.search_engine,
+                instructions=job.instructions,
+                attempt=job.attempt + 1,
+            )
+            for job in failed
+        ]
+        for job in again:
+            self.jobs.start(job.id)
+        return again
 
     def thread_status(self, thread_id: str) -> ThreadStatus:
         return summarise(self.store.list_jobs(thread_id))

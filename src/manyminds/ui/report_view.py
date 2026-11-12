@@ -30,27 +30,30 @@ def _evidence_item(item: EvidenceItem) -> None:
         elif item.quote_matched is False:
             ui.label("Quote not found in the search result").classes("mm-flag")
         elif item.quote_matched is None:
-            ui.label("Quote not checked against the source").classes("mm-host")
+            ui.label("Quote not checked against the source").classes("mm-unchecked")
 
 
 def report_view(report: Report) -> None:
-    ui.label("Summary").classes(theme.SECTION)
-    ui.label(report.summary).classes(theme.BODY)
+    ui.label("Report").classes("mm-report-heading")
+    with ui.column().classes(theme.PANEL):
+        ui.label("Summary").classes(theme.LABEL)
+        ui.label(report.summary).classes(theme.BODY)
 
     if not report.evidence:
-        ui.label("Evidence").classes(theme.SECTION)
+        ui.label("Evidence").classes("mm-stance-heading")
         ui.label("No evidence was found.").classes(theme.MUTED)
     for stance, heading, marker in GROUPS:
         items = [item for item in report.evidence if item.stance is stance]
         if items:
-            with ui.column().classes("gap-0 items-stretch").mark(marker):
-                ui.label(heading).classes(theme.SECTION)
-                with ui.column().classes("gap-0 items-stretch " + theme.RULED):
+            with ui.column().classes(f"mm-stance mm-stance-{stance.value}").mark(marker):
+                ui.label(f"{heading} ({len(items)})").classes("mm-stance-heading")
+                with ui.column().classes("mm-stance-items"):
                     for item in items:
                         _evidence_item(item)
 
-    ui.label("Could not be determined").classes(theme.SECTION)
-    ui.label(report.undetermined).classes(theme.BODY)
+    with ui.column().classes(theme.PANEL + " mm-open"):
+        ui.label("Could not be determined").classes(theme.LABEL)
+        ui.label(report.undetermined).classes(theme.BODY)
 
 
 def usage_line(usage: Usage | None) -> str | None:

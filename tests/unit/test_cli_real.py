@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -14,7 +15,7 @@ KEY = "sk-or-v1-cli-test-key-0123456789-do-not-print"
 
 
 @pytest.fixture
-def served(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+def served(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
     """Capture what the command would serve instead of starting a server."""
     captured: dict[str, Any] = {}
 
@@ -23,6 +24,7 @@ def served(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         captured.update(options)
 
     monkeypatch.setattr("manyminds.ui.app.run", fake_run)
+    monkeypatch.setenv("MANYMINDS_DATA_DIR", str(tmp_path / "data"))
     return captured
 
 
@@ -68,7 +70,7 @@ def test_it_says_where_pasted_text_goes_and_never_prints_the_key(
     assert "OpenRouter" in output
     assert "the model provider" in output
     assert "Exa" in output
-    assert "nothing is saved" in output.lower()
+    assert "saved on this computer" in output
     assert KEY not in output
     assert KEY not in repr(served["services"])
 
@@ -138,3 +140,39 @@ def test_a_key_that_cannot_be_sent_is_refused_without_printing_it(
     assert "OPENROUTER_API_KEY" in error
     assert "characters" in error
     assert value not in error
+
+
+def test_checks_are_kept_in_the_data_folder_and_the_start_message_names_it(
+    served: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+
+    cli.main([])
+
+    assert (tmp_path / "data" / "manyminds.db").is_file()
+    assert str(tmp_path / "data") in capsys.readouterr().out
+
+
+def test_starting_marks_work_cut_off_last_time_as_interrupted(
+    served: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from manyminds.core.models import ErrorKind, SearchEngine
+    from manyminds.core.paths import open_store
+
+    earlier = open_store(tmp_path / "data")
+    check = earlier.create_check_with_leads(
+        title="T", source_text="Some text.", instructions="", leads=["Lead A"]
+    )
+    _, jobs = earlier.launch_leads(
+        check.id, models=["vendor/model-a"], search_engine=SearchEngine.EXA, instructions=""
+    )
+    earlier.close()
+    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+
+    cli.main([])
+
+    job = served["services"].store.get_job(jobs[0].id)
+    assert job.error_kind is ErrorKind.INTERRUPTED
