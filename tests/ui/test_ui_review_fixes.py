@@ -5,7 +5,7 @@ from nicegui.testing import User
 
 from manyminds.core.models import EvidenceItem, Report, Stance
 from manyminds.core.services import Services
-from support import Faults, RecordingModel
+from support import Faults, RecordingModel, start_all
 
 TEXT = "The bridge opened in 1932."
 OUT_OF_DATE = "This list was out of date and has been refreshed."
@@ -15,7 +15,7 @@ async def generate_leads(user: User) -> None:
     await user.open("/")
     user.find(marker="composer").type(TEXT)
     user.find("Generate leads").click()
-    await user.should_see("Leads to research")
+    await user.should_see(marker="lead-list")
 
 
 def lead_boxes(user: User) -> list[str]:
@@ -26,17 +26,17 @@ def lead_boxes(user: User) -> list[str]:
 # -- empty leads -----------------------------------------------------------------------------
 
 
-async def test_go_is_refused_while_a_lead_is_empty(
+async def test_go_is_refused_on_an_empty_lead(
     user: User, model: RecordingModel, services: Services
 ) -> None:
     await generate_leads(user)
 
     with user.scope(marker="lead-row-1"):
         user.find(kind=ui.input).clear()
-    user.find("Go").click()
+        user.find(marker="go").click()
 
-    await user.should_see("A lead is empty. Fill it in or remove it.")
-    await user.should_not_see("Threads")
+    await user.should_see("This lead is empty. Fill it in first.")
+    await user.should_not_see(marker="thread-row-0")
     assert model.research_calls == []
     (check,) = services.store.list_checks()
     assert services.store.list_threads(check.id) == []
@@ -50,8 +50,8 @@ async def test_an_emptied_lead_can_be_refilled_and_launched(
     with user.scope(marker="lead-row-1"):
         user.find(kind=ui.input).clear()
         user.find(kind=ui.input).type("Lead B, rewritten")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
     await services.jobs.wait_until_idle()
 
     assert [call["lead"] for call in model.research_calls] == [
@@ -73,8 +73,9 @@ async def test_an_emptied_lead_still_looks_empty_after_the_list_is_redrawn(
     await user.should_not_see("Lead A")
 
     assert lead_boxes(user) == ["", "Lead C"]
-    user.find("Go").click()
-    await user.should_see("A lead is empty. Fill it in or remove it.")
+    with user.scope(marker="lead-row-0"):
+        user.find(marker="go").click()
+    await user.should_see("This lead is empty. Fill it in first.")
     assert model.research_calls == []
 
 
@@ -89,12 +90,12 @@ async def test_threads_launched_elsewhere_appear_on_an_open_check_page(
 
     services.checks.launch(check.id, ["vendor/research-model"])
 
-    await user.should_see("Threads")
+    await user.should_see(marker="thread-row-0")
     with user.scope(marker="thread-row-2"):
         await user.should_see("Lead C")
         await user.should_see("Finished")
     await user.should_not_see(marker="lead-row-0")
-    await user.should_not_see("Go")
+    await user.should_not_see(marker="go")
 
 
 async def test_removing_a_lead_already_removed_elsewhere_refreshes_the_list(
@@ -113,7 +114,7 @@ async def test_removing_a_lead_already_removed_elsewhere_refreshes_the_list(
     assert lead_boxes(user) == ["Lead A", "Lead C"]
 
 
-async def test_go_with_every_lead_removed_elsewhere_refreshes_the_list(
+async def test_go_on_a_lead_removed_elsewhere_refreshes_the_list(
     user: User, model: RecordingModel, services: Services
 ) -> None:
     await generate_leads(user)
@@ -121,11 +122,12 @@ async def test_go_with_every_lead_removed_elsewhere_refreshes_the_list(
     for lead in services.store.list_draft_leads(check.id):
         services.checks.remove_lead(lead.id)
 
-    user.find("Go").click()
+    with user.scope(marker="lead-row-0"):
+        user.find(marker="go").click()
 
     await user.should_see(OUT_OF_DATE)
     await user.should_not_see(marker="lead-row-0")
-    await user.should_not_see("Go")
+    await user.should_not_see(marker="go")
     assert model.research_calls == []
 
 
@@ -152,10 +154,10 @@ async def test_research_that_cannot_be_started_says_so(
     await generate_leads(user)
     faults.fail("INTO jobs", times=None)
 
-    user.find("Go").click()
+    start_all(user)
 
     await user.should_see("Research could not be started. Nothing was changed.")
-    await user.should_not_see("Threads")
+    await user.should_not_see(marker="thread-row-0")
     assert lead_boxes(user) == ["Lead A", "Lead B", "Lead C"]
     assert model.research_calls == []
 
@@ -165,8 +167,8 @@ async def test_research_that_cannot_be_started_says_so(
 
 async def open_first_report(user: User) -> None:
     await generate_leads(user)
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
     with user.scope(marker="thread-row-0"):
         await user.should_see("Finished")
     user.find(marker="thread-row-0").click()

@@ -6,6 +6,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from nicegui import ElementFilter
+from nicegui.testing import User
+
 from manyminds.core.models import (
     EvidenceItem,
     JobEventKind,
@@ -32,6 +35,13 @@ async def until(condition: Callable[[], bool], timeout: float = 2.0) -> None:
         if loop.time() > deadline:
             raise AssertionError("condition was not met in time")
         await asyncio.sleep(0)
+
+
+def start_all(user: User) -> None:
+    """Start research on every waiting lead: "Research all", or Go when there is only one."""
+    with user:
+        several = list(ElementFilter(marker="research-all"))
+    user.find(marker="research-all" if several else "go").click()
 
 
 def report_for(lead: str) -> Report:

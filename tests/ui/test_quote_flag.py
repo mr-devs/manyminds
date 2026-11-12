@@ -5,7 +5,7 @@ from __future__ import annotations
 from nicegui.testing import User
 
 from manyminds.core.models import EvidenceItem, Report, Stance
-from support import RecordingModel
+from support import RecordingModel, start_all
 
 
 def evidence(quote: str, matched: bool | None) -> EvidenceItem:
@@ -32,9 +32,9 @@ async def test_only_the_unmatched_quote_is_flagged(user: User, model: RecordingM
     await user.open("/")
     user.find(marker="composer").type("The bridge opened in 1932.")
     user.find("Generate leads").click()
-    await user.should_see("Leads to research")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    await user.should_see(marker="lead-list")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
     with user.scope(marker="thread-row-0"):
         await user.should_see("Finished")
     user.find(marker="thread-row-0").click()

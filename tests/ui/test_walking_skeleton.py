@@ -6,24 +6,22 @@ from nicegui.testing import User
 from manyminds.core.errors import ModelError
 from manyminds.core.models import ErrorKind, EvidenceItem, Report, Stance
 from manyminds.core.services import Services
-from support import RecordingModel, until
+from support import RecordingModel, start_all, until
 
 TEXT = "The bridge opened in 1932."
 
 
-async def generate_leads(user: User, text: str = TEXT, instructions: str = "") -> None:
+async def generate_leads(user: User, text: str = TEXT) -> None:
     await user.open("/")
     user.find(marker="composer").type(text)
-    if instructions:
-        user.find(marker="instructions").type(instructions)
     user.find("Generate leads").click()
-    await user.should_see("Leads")
+    await user.should_see(marker="lead-list")
 
 
 async def launch(user: User) -> None:
     await generate_leads(user)
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
 
 
 def only_check_id(services: Services) -> str:
@@ -42,15 +40,23 @@ async def test_home_offers_a_box_to_paste_text_into(user: User) -> None:
 async def test_generating_leads_shows_the_check_and_its_editable_leads(
     user: User, model: RecordingModel
 ) -> None:
-    await generate_leads(user, instructions="Prefer archives")
+    await generate_leads(user, TEXT + " Prefer archives.")
 
     await user.should_see("Bridge claim")
-    await user.should_see(TEXT)
+    await user.should_see(TEXT + " Prefer archives.")
     for lead in ("Lead A", "Lead B", "Lead C"):
         await user.should_see(kind=ui.input, content=lead)
-    await user.should_see("Go")
-    assert model.decompose_calls[0]["text"] == TEXT
-    assert model.decompose_calls[0]["instructions"] == "Prefer archives"
+    await user.should_see(marker="go")
+    # One box holds the text and whatever the user asks for; it is sent whole.
+    assert model.decompose_calls[0]["text"] == TEXT + " Prefer archives."
+    assert model.decompose_calls[0]["instructions"] == ""
+
+
+async def test_there_is_one_box_and_no_separate_one_for_instructions(user: User) -> None:
+    await user.open("/")
+
+    await user.should_see(marker="composer")
+    await user.should_not_see(marker="instructions")
 
 
 async def test_generating_with_no_text_asks_for_some(user: User, model: RecordingModel) -> None:
@@ -88,8 +94,8 @@ async def test_go_researches_every_lead_left_in_the_list(
 ) -> None:
     await generate_leads(user)
 
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
     await services.jobs.wait_until_idle()
 
     assert [call["lead"] for call in model.research_calls] == ["Lead A", "Lead B", "Lead C"]
@@ -103,8 +109,8 @@ async def test_an_edited_lead_is_researched_as_edited(
 
     with user.scope(marker="lead-row-1"):
         user.find(kind=ui.input).clear().type("Lead B, reworded")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
     await services.jobs.wait_until_idle()
 
     assert [call["lead"] for call in model.research_calls] == [
@@ -122,8 +128,8 @@ async def test_a_removed_lead_disappears_and_is_not_researched(
     with user.scope(marker="lead-row-1"):
         user.find(marker="remove-lead").click()
     await user.should_not_see("Lead B")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
     await services.jobs.wait_until_idle()
 
     assert [call["lead"] for call in model.research_calls] == ["Lead A", "Lead C"]
@@ -136,8 +142,8 @@ async def test_another_model_can_be_chosen(
 
     user.find(marker="model-picker").click()
     user.find("vendor/other-model").click()
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
     await services.jobs.wait_until_idle()
 
     assert {call["model"] for call in model.research_calls} == {"vendor/other-model"}
@@ -186,7 +192,7 @@ async def test_one_failed_thread_leaves_the_others_untouched(
 async def test_launched_leads_are_no_longer_offered_for_editing(user: User) -> None:
     await launch(user)
 
-    await user.should_not_see("Go")
+    await user.should_not_see(marker="go")
     await user.should_not_see(marker="lead-row-0")
 
 
@@ -355,7 +361,7 @@ async def test_a_check_page_can_be_opened_directly_by_its_address(
     await user.open(f"/check/{only_check_id(services)}")
 
     await user.should_see("Bridge claim")
-    await user.should_see("Threads")
+    await user.should_see(marker="thread-row-0")
     with user.scope(marker="thread-row-0"):
         await user.should_see("Finished")
 

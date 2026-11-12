@@ -9,14 +9,14 @@ from manyminds.core.errors import ModelError
 from manyminds.core.models import ErrorKind
 from manyminds.core.services import Services
 from manyminds.ui.app import build_root
-from support import RecordingModel, until
+from support import RecordingModel, start_all, until
 
 
 async def new_check(user: User, text: str) -> None:
     await user.open("/")
     user.find(marker="composer").type(text)
     user.find("Generate leads").click()
-    await user.should_see("Leads to research")
+    await user.should_see(marker="lead-list")
 
 
 # -- sidebar -------------------------------------------------------------------------------
@@ -50,7 +50,7 @@ async def test_a_sidebar_entry_opens_its_check(services: Services, model: Record
         user.find(marker="sidebar-check-1").click()
 
         await user.should_see("First text, the older one.")
-        await user.should_see("Leads to research")
+        await user.should_see(marker="lead-list")
 
 
 async def test_a_new_check_appears_in_the_sidebar_at_once(user: User) -> None:
@@ -79,8 +79,8 @@ async def test_a_lead_can_be_added_and_researched(user: User, services: Services
     await user.should_see(marker="lead-row-3")
     with user.scope(marker="lead-row-3"):
         user.find(kind=ui.input).type("A lead of my own")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
 
     with user.scope(marker="thread-row-3"):
         await user.should_see("A lead of my own")
@@ -90,15 +90,15 @@ async def test_a_lead_can_be_added_after_research_has_started(
     user: User, services: Services
 ) -> None:
     await new_check(user, "The bridge opened in 1932.")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
     await user.should_not_see(marker="lead-row-0")
 
     user.find("Add a lead").click()
     await user.should_see(marker="lead-row-0")
     with user.scope(marker="lead-row-0"):
         user.find(kind=ui.input).type("One more lead")
-    user.find("Go").click()
+    start_all(user)
     await user.should_see(marker="thread-row-3")
 
     with user.scope(marker="thread-row-3"):
@@ -150,8 +150,8 @@ async def test_a_failed_thread_offers_to_try_again(
 ) -> None:
     model.failures["Lead A"] = ModelError(ErrorKind.PROVIDER, "The provider fell over.")
     await new_check(user, "The bridge opened in 1932.")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
     with user.scope(marker="thread-row-0"):
         await user.should_see("Failed")
     user.find(marker="thread-row-0").click()
@@ -169,8 +169,8 @@ async def test_a_failed_thread_offers_to_try_again(
 
 async def test_a_finished_thread_does_not_offer_to_try_again(user: User) -> None:
     await new_check(user, "The bridge opened in 1932.")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
     with user.scope(marker="thread-row-0"):
         await user.should_see("Finished")
     user.find(marker="thread-row-0").click()
@@ -204,7 +204,7 @@ async def test_the_chosen_model_survives_adding_a_lead(user: User, services: Ser
     await user.should_see(marker="lead-row-3")
     with user.scope(marker="lead-row-3"):
         user.find(kind=ui.input).type("A lead of my own")
-    user.find("Go").click()
+    start_all(user)
     await user.should_see(marker="thread-row-3")
 
     (check,) = services.store.list_checks()
@@ -221,8 +221,8 @@ async def test_deleting_while_research_runs_is_refused_with_a_reason(
 ) -> None:
     model.hold = True
     await new_check(user, "The bridge opened in 1932.")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
 
     user.find("Delete check").click()
     await user.should_see("Delete this check and its research?")

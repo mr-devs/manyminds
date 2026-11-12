@@ -9,7 +9,7 @@ from nicegui.testing import User
 from manyminds.core.errors import ModelError
 from manyminds.core.models import ErrorKind, JobEventKind
 from manyminds.core.ports import Progress
-from support import RecordingModel
+from support import RecordingModel, start_all
 
 THINKING = "I should look for the official opening date first,\nthen check who measured the span."
 SOURCES = "example.org: The bridge opened to traffic in March 1932."
@@ -61,9 +61,9 @@ async def open_first_thread(user: User, model: RecordingModel, *, hold: bool) ->
     await user.open("/")
     user.find(marker="composer").type("The bridge opened in 1932.")
     user.find("Generate leads").click()
-    await user.should_see("Leads to research")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    await user.should_see(marker="lead-list")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
     if not hold:
         with user.scope(marker="thread-row-0"):
             await user.should_see("Finished")
@@ -153,9 +153,9 @@ async def test_transcript_text_is_shown_as_plain_text(user: User, model: Recordi
     await user.open("/")
     user.find(marker="composer").type("Another claim.")
     user.find("Generate leads").click()
-    await user.should_see("Leads to research")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    await user.should_see(marker="lead-list")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
     with user.scope(marker="thread-row-1"):
         await user.should_see("Finished")
     user.find(marker="thread-row-1").click()

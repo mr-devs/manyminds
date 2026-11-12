@@ -205,7 +205,10 @@ async def test_announcements_say_which_check_and_thread_changed(
 
     await jobs.wait_until_idle()
 
-    assert {(event.check_id, event.thread_id) for event in events} == {(thread.check_id, thread.id)}
+    assert {
+        (event.check_id, event.thread_id) for event in events if isinstance(event, JobUpdated)
+    } == {(thread.check_id, thread.id)}
+    assert all(isinstance(event, JobUpdated) for event in events)
 
 
 async def test_unsubscribed_listeners_hear_nothing_more(
