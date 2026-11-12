@@ -1,8 +1,8 @@
 # manyminds
 
 **Status: early alpha.** The core loop works on real models: paste text, get leads, research
-them in parallel, read cited reports. Nothing is saved between runs yet, and settings,
-conversations and key storage are still to come. See
+them in parallel, read cited reports, and come back to saved checks later. Settings,
+conversations about the evidence and key storage are still to come. See
 [`PLAN.md`](https://github.com/mr-devs/manyminds/blob/main/PLAN.md) for what is done and what is
 next.
 
@@ -27,6 +27,11 @@ matched to what the search actually returned.
 Orchestration is local; inference is not. Text you paste is sent to OpenRouter, to the model
 provider behind each model you choose, and to the [Exa](https://exa.ai) search engine, which
 runs the web searches. The app listens on localhost only.
+
+Checks are saved on your computer only, in your user data folder (on macOS,
+`~/Library/Application Support/manyminds`), in a file only your account can read. Set
+`MANYMINDS_DATA_DIR` to keep them somewhere else. Deleting a check in the app removes its
+text, leads and reports from that file.
 
 Your API key is read from the `OPENROUTER_API_KEY` environment variable. It is never written to
 disk, logged or printed. Storing it in the operating system's keychain is planned.

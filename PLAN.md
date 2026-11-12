@@ -363,6 +363,7 @@ update to this table.
 | 0 | Repository and PyPI name | 0.0.1 | **done 2026-11-11** |
 | 1a | Walking skeleton on the fake model | | **done 2026-11-11** |
 | 1b | Real research through OpenRouter | 0.1.0a1 | done; release pending |
+| 1c | Saved checks, sidebar, lead editing, redesign, lead prompt (owner's request, 2026-11-12) | | done |
 | 2 | Full lead-list controls | | not started |
 | 3 | Home, check page, persistence across restarts | 0.1.0a2 | not started |
 | 4 | Multiple models per lead | | not started |
@@ -481,6 +482,22 @@ one model, live progress lines ("searching: ..."), and reports with clickable so
   `Retry-After` (6; the adapter already exposes the value); a `ModelCatalog`.
 - Checked by hand in a browser: one real check end to end (lead generated, two searches,
   sources listed, thinking shown, report with five grounded quotes, usage line).
+
+### Milestone 1c: saved checks, lead editing, redesign (owner's request, 2026-11-12)
+
+Built ahead of the original order at the owner's request, taking parts of milestones 2 and 3.
+
+- Checks are saved in the user's data folder and listed in the sidebar, newest first
+  (decision 16). Work cut off by a restart is marked interrupted and can be tried again from
+  its thread. A check can be deleted.
+- Draft leads are numbered, visibly editable fields. **Add a lead** is always available,
+  including after research has started. A list holds 25 leads at most.
+- Wider column (880px), stronger section headings, tinted panels for given text, thread
+  cards, and reports with evidence colour-ruled by which way it cuts.
+- The lead prompt now asks for checkable, single, self-contained, faithful claims, ranked by
+  how much the text depends on them and how much it matters if they are wrong.
+- **Still to do from milestones 2 and 3:** Enter to generate, "Generate 5 more", reordering,
+  renaming a check, "Resume all interrupted", and live updates of the sidebar across tabs.
 
 ### Milestone 2: full lead-list controls
 
