@@ -1,10 +1,12 @@
 # manyminds
 
-**Status: pre-alpha.** This release only claims the package name. The `manyminds` command
-prints its version and a short notice; the application is not built yet. See
-[`PLAN.md`](https://github.com/mr-devs/manyminds/blob/main/PLAN.md) for what is coming.
+**Status: early alpha.** The core loop works on real models: paste text, get leads, research
+them in parallel, read cited reports. Nothing is saved between runs yet, and settings,
+conversations and key storage are still to come. See
+[`PLAN.md`](https://github.com/mr-devs/manyminds/blob/main/PLAN.md) for what is done and what is
+next.
 
-## What it will be
+## What it is
 
 A Python app that helps you check claims you find on the web. It runs on your own machine with
 your own [OpenRouter](https://openrouter.ai) API key, and its only interface is a local
@@ -13,16 +15,41 @@ browser app.
 You paste a piece of text. The app proposes *leads*: specific threads that could be researched
 to see whether the text is supported by evidence. You edit that list, and one research agent
 per lead runs in parallel and writes a focused report of quoted, linked evidence. You can read
-finished reports while others are still running, then chat about the evidence and start more
-research.
+finished reports while others are still running, and open any thread to see what the agent
+searched for and found.
 
-manyminds gathers evidence for you to judge. It does not issue verdicts on what is true.
+manyminds gathers evidence for you to judge. It does not issue verdicts on what is true. Each
+piece of evidence links to its source, and is flagged when the link or the quote could not be
+matched to what the search actually returned.
 
 ## Where your text goes
 
 Orchestration is local; inference is not. Text you paste is sent to OpenRouter, to the model
-providers you choose, and to the web search engine used for research. Your API key is kept in
-your operating system's keychain. The app listens on localhost only.
+provider behind each model you choose, and to the [Exa](https://exa.ai) search engine, which
+runs the web searches. The app listens on localhost only.
+
+Your API key is read from the `OPENROUTER_API_KEY` environment variable. It is never written to
+disk, logged or printed. Storing it in the operating system's keychain is planned.
+
+Research agents read web pages, which can contain text written to mislead a model. They are
+given a search tool and nothing else, and their output is checked against a fixed format, but
+no defence here is complete: read the sources yourself.
+
+## Run
+
+```
+export OPENROUTER_API_KEY=...     # create one at https://openrouter.ai/keys
+uvx manyminds
+```
+
+A lead costs roughly one to two US cents with the default model, most of it the web searches.
+The cost of each finished thread is shown under its report.
+
+To look around with placeholder data, no key and no cost:
+
+```
+uvx manyminds --demo
+```
 
 ## Install
 

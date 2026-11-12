@@ -362,7 +362,7 @@ update to this table.
 |---|---|---|---|
 | 0 | Repository and PyPI name | 0.0.1 | **done 2026-11-11** |
 | 1a | Walking skeleton on the fake model | | **done 2026-11-11** |
-| 1b | Real research through OpenRouter | 0.1.0a1 | not started |
+| 1b | Real research through OpenRouter | 0.1.0a1 | done; release pending |
 | 2 | Full lead-list controls | | not started |
 | 3 | Home, check page, persistence across restarts | 0.1.0a2 | not started |
 | 4 | Multiple models per lead | | not started |
@@ -461,6 +461,26 @@ without a failing test first.
 **You will see:** with `OPENROUTER_API_KEY` set in your shell, `uv run manyminds` does the same
 flow as 1a against real models: real leads within a few seconds, real parallel research with
 one model, live progress lines ("searching: ..."), and reports with clickable sources.
+
+**Milestone 1b as built (2026-11-12)**
+
+- The spike settled the open questions; see decision 15. Research is two calls on the
+  Responses API, and the search engine defaults to `exa`.
+- Refusals are detected the Responses way (a `refusal` content part, or status `incomplete`
+  with reason `content_filter`), not through `finish_reason`.
+- HTTP 403 is treated as a refusal, because OpenRouter uses it for moderation blocks.
+- A report that breaks the schema anywhere (an extra `verdict` field, a `javascript:` link,
+  a missing quote) is rejected whole, after one repair attempt.
+- Each finished job records tokens, searches and cost, shown under its report. Failed jobs do
+  not record what they used.
+- Bare `manyminds` starts the app when `OPENROUTER_API_KEY` is set and explains what to do
+  when it is not. The research models offered are a fixed list until the model catalogue
+  (milestone 4).
+- **Not built here, moved to the milestone that needs them:** the prompted-JSON path for
+  models without structured output (4, with the catalogue); automatic retries using
+  `Retry-After` (7; the adapter already exposes the value); a `ModelCatalog`.
+- Checked by hand in a browser: one real check end to end (lead generated, two searches,
+  sources listed, thinking shown, report with five grounded quotes, usage line).
 
 ### Milestone 2: full lead-list controls
 

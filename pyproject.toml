@@ -1,6 +1,6 @@
 [project]
 name = "manyminds"
-version = "0.0.1"
+version = "0.1.0a1"
 description = "Pre-alpha placeholder: a local app that gathers cited evidence about claims found on the web. Not usable yet."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -9,7 +9,7 @@ license-files = ["LICENSE"]
 authors = [{ name = "Matthew DeVerna" }]
 keywords = ["fact-checking", "research", "evidence", "nicegui", "openrouter"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Environment :: Web Environment",
     "Intended Audience :: End Users/Desktop",
     "Operating System :: OS Independent",
