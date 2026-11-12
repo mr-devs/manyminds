@@ -41,7 +41,8 @@ another folder."""
 
 DISCLOSURE = (
     "Text you paste is sent to OpenRouter, to the model provider behind each model you "
-    "choose, and to the Exa search engine. The app runs only on this computer, and your "
+    "choose, and to Exa, which runs the web searches and opens links. The app runs only on "
+    "this computer, and your "
     "checks are saved on this computer."
 )
 

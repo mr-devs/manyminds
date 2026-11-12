@@ -320,6 +320,7 @@ def _lead_row(
 STEP_TEXT = {
     JobEventKind.STARTED: "Started",
     JobEventKind.SEARCHING: "Searching: {detail}",
+    JobEventKind.READING: "Reading: {detail}",
     JobEventKind.WRITING: "Writing the report",
     JobEventKind.RETRYING: "Trying again: {detail}",
     JobEventKind.FINISHED: "Report ready",

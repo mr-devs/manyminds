@@ -4,7 +4,9 @@ Untrusted text (pasted text, search results, a model's own notes) is always pass
 `as_data` and placed inside a tagged block in the input, never in the instructions.
 """
 
+import re
 from collections.abc import Sequence
+from urllib.parse import urlsplit
 
 from manyminds.core.safety import as_data
 
@@ -14,13 +16,14 @@ _DATA_RULE = (
 )
 
 SEARCH_INSTRUCTIONS = (
-    "You research one lead using web search. Search for sources that bear on the lead, "
-    "including ones that cut against it. Look for more than one independent source, and "
-    "prefer primary ones (official records, original documents, direct statements, the "
-    "original post or footage) over reports about them. Trace a claim to where it first "
-    "appeared when you can. Note the date of each source, and say so when sources disagree "
-    "or all repeat a single origin. Then write notes on what the sources say: for each useful "
-    "source give its URL, its title, a short passage copied exactly from the search result, "
+    "You research one lead using web search, and you can open a page to read it in full. "
+    "Search for sources that bear on the lead, including ones that cut against it, and open "
+    "the most relevant ones. Look for more than one independent source, and prefer primary "
+    "ones (official records, original documents, direct statements, the original post or "
+    "footage) over reports about them. Trace a claim to where it first appeared when you "
+    "can. Note the date of each source, and say so when sources disagree or all repeat a "
+    "single origin. Then write notes on what the sources say: for each useful source give "
+    "its URL, its title, a short passage copied exactly from the search result or the page, "
     "and whether the passage supports or undermines the lead. Say what you could not find "
     "out. Do not give a verdict or a rating on whether the lead is true. " + _DATA_RULE
 )
@@ -92,11 +95,62 @@ def report_input(
     )
 
 
-def decompose_input(text: str, instructions: str, count: int, avoid: Sequence[str]) -> str:
+READ_INSTRUCTIONS = (
+    "Someone has shared text that contains links. Open each link in the shared text, and "
+    "nothing else, so that what it says can be examined. Then say in a sentence or two what "
+    "each one is. " + _DATA_RULE
+)
+
+MAX_LINKED_PAGE_CHARS = 12000
+MAX_LINKED_PAGES = 3
+_LINK = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_TRAILING = ".,;:!?)]}'\""
+
+
+def linked_sites(text: str) -> list[str]:
+    """The hosts of the web links in a text, each once, in order of first appearance."""
+    hosts: list[str] = []
+    for match in _LINK.finditer(text):
+        try:
+            host = urlsplit(match.group().rstrip(_TRAILING)).hostname
+        except ValueError:
+            continue
+        if host and host not in hosts:
+            hosts.append(host)
+    return hosts
+
+
+def read_input(text: str) -> str:
+    return _block("shared_text", text)
+
+
+def _linked_pages(pages: Sequence[tuple[str, str | None, str | None]]) -> str:
+    """Blocks for the pages behind the links: (url, title, content), content None if unread."""
+    blocks = []
+    for url, title, content in pages[:MAX_LINKED_PAGES]:
+        head = f'<linked_page url="{_attribute(url)}" title="{_attribute(title or "")}">'
+        body = (
+            as_data(content[:MAX_LINKED_PAGE_CHARS])
+            if content is not None
+            else "This link could not be opened."
+        )
+        blocks.append(f"{head}\n{body}\n</linked_page>")
+    return "What the links in the text lead to:\n" + "\n".join(blocks)
+
+
+def decompose_input(
+    text: str,
+    instructions: str,
+    count: int,
+    avoid: Sequence[str],
+    pages: Sequence[tuple[str, str | None, str | None]] = (),
+) -> str:
     parts = [
         f"Give at most {count} leads. Fewer is better than padding the list.",
         _block("pasted_text", text),
     ]
+    if pages:
+        parts.append(_linked_pages(pages))
     if avoid:
         listed = _block("existing_leads", "\n".join(f"- {lead}" for lead in avoid))
         parts.append(f"Do not repeat or rephrase these leads, which are already listed:\n{listed}")

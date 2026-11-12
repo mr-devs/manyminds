@@ -93,6 +93,7 @@ class JobEventKind(StrEnum):
     STARTED = "started"
     THINKING = "thinking"
     SEARCHING = "searching"
+    READING = "reading"
     SOURCES_FOUND = "sources_found"
     MESSAGE = "message"
     WRITING = "writing"
