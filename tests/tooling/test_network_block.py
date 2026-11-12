@@ -30,3 +30,25 @@ def test_localhost_is_still_allowed() -> None:
             client.connect(server.getsockname())
 
     assert socket.getaddrinfo("localhost", 80)
+
+
+def test_connect_ex_is_refused_too() -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.2)
+        with pytest.raises(NetworkBlockedError, match=r"192\.0\.2\.1"):
+            sock.connect_ex(UNROUTABLE)
+
+
+@pytest.mark.parametrize("lookup", [socket.gethostbyname, socket.gethostbyname_ex])
+def test_older_name_lookups_are_refused(lookup: object) -> None:
+    assert callable(lookup)
+    with pytest.raises(NetworkBlockedError, match=r"openrouter\.ai"):
+        getattr(socket, lookup.__name__)("openrouter.ai")
+
+
+def test_datagrams_are_refused() -> None:
+    with (
+        socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock,
+        pytest.raises(NetworkBlockedError, match=r"192\.0\.2\.1"),
+    ):
+        sock.sendto(b"x", UNROUTABLE)
