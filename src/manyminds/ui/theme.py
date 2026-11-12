@@ -6,6 +6,7 @@ fetched from a font server.
 
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from datetime import datetime
 
 from nicegui import ui
 
@@ -314,6 +315,11 @@ def apply() -> None:
     ui.add_css(CSS)
 
 
+def format_when(moment: datetime) -> str:
+    """A date and time for display, such as "3 Nov 2026, 09:05", the same on every platform."""
+    return f"{moment.day} {moment:%b %Y, %H:%M}"
+
+
 def sidebar(saved_checks: Callable[[], object]) -> None:
     """The left column: a way to start a check, and every check that has been saved."""
     with ui.left_drawer(bordered=False).props("width=264").classes("mm-sidebar"):
@@ -341,8 +347,7 @@ def sidebar_checks(checks: Sequence[Check]) -> None:
                 ui.item_section(),
             ):
                 ui.label(check.title).classes("mm-side-title")
-                created = check.created_at.astimezone().strftime("%-d %b %Y, %H:%M")
-                ui.label(created).classes("mm-side-date")
+                ui.label(format_when(check.created_at.astimezone())).classes("mm-side-date")
 
 
 @contextmanager

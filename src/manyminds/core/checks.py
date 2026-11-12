@@ -22,10 +22,15 @@ INITIAL_LEADS = 10
 MAX_LEADS = 25
 """The most leads waiting in one list. Launched leads no longer count."""
 TITLE_LENGTH = 60
+MAX_TITLE_LENGTH = 120
 
 
 class NothingToLaunchError(ValueError):
     """There are no draft leads left, for example because another tab launched them."""
+
+
+class CheckBusyError(ValueError):
+    """The check still has research under way."""
 
 
 class TooManyLeadsError(ValueError):
@@ -86,12 +91,18 @@ class CheckService:
         leads = _unique_leads(decomposition.leads, INITIAL_LEADS)
         if not leads:
             raise ModelError(ErrorKind.INVALID_OUTPUT, "No leads could be generated for this text.")
-        title = decomposition.title.strip() or _squash(text)[:TITLE_LENGTH]
+        title = _squash(decomposition.title) or _squash(text)[:TITLE_LENGTH]
+        if len(title) > MAX_TITLE_LENGTH:
+            title = title[: MAX_TITLE_LENGTH - 1].rstrip() + "…"
         return self.store.create_check_with_leads(
             title=title, source_text=text, instructions=instructions, leads=leads
         )
 
     def delete_check(self, check_id: str) -> None:
+        """Delete a check and its research. Refused while any of that research is running,
+        because a running job cannot be stopped and would go on being paid for."""
+        if self.store.count_unfinished_jobs(check_id):
+            raise CheckBusyError("Research is still running. Wait for it to finish, then delete.")
         self.store.delete_check(check_id)
 
     def add_lead(self, check_id: str) -> Lead:

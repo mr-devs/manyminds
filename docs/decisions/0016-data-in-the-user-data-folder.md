@@ -19,6 +19,14 @@ sidebar. Until now the real app kept its database in memory.
   **Try again**, which runs a new attempt and keeps the old transcript.
 - A check can be deleted from its page after confirming. Deleting removes its leads, threads,
   jobs, transcripts and reports.
+- Only a folder the app creates is made private; a folder that already exists keeps its
+  permissions. The database file is always `0600`.
+- One copy of the app per data folder. A second copy is refused at start-up, by a lock on a
+  small file beside the database, because it would treat the first copy's running work as cut
+  off.
+- A check cannot be deleted while its research is running, because a running job cannot be
+  stopped and would go on being paid for.
+- A folder or database that cannot be used produces a short message, not a traceback.
 - `--demo` stays in memory and writes nothing.
 
 ## Consequences

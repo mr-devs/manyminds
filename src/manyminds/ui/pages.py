@@ -6,7 +6,7 @@ from collections.abc import Callable
 from nicegui import Event, ui
 from nicegui.events import ScrollEventArguments, ValueChangeEventArguments
 
-from manyminds.core.checks import NothingToLaunchError, TooManyLeadsError
+from manyminds.core.checks import CheckBusyError, NothingToLaunchError, TooManyLeadsError
 from manyminds.core.errors import ModelError
 from manyminds.core.events import JobUpdated
 from manyminds.core.models import JobEvent, JobEventKind, Lead, ThreadStatus
@@ -135,6 +135,9 @@ def check_page(
                 services.checks.delete_check(check_id)
             except NotFoundError:
                 pass  # Already deleted from another tab; the outcome is the same.
+            except CheckBusyError as error:
+                tell(str(error))
+                return
             except Exception as error:
                 logger.error("Deleting a check failed: %s", type(error).__name__)
                 tell("This check could not be deleted. Nothing was changed.")
@@ -189,7 +192,7 @@ def check_page(
                                 services.checks.thread_status(thread.id)
                             )
                         with ui.item_section().props("side"):
-                            started = thread.created_at.astimezone().strftime("%H:%M")
+                            started = theme.format_when(thread.created_at.astimezone())
                             ui.label(started).classes(theme.MUTED)
 
         def tell(message: str) -> None:
@@ -204,6 +207,9 @@ def check_page(
             # Another tab changed these leads; show what is really there.
             tell("This list was out of date and has been refreshed.")
             redraw()
+
+        # Kept outside the editor, which is rebuilt whenever a lead is added or removed.
+        chosen = {"model": services.research_models[0]}
 
         def add_lead() -> None:
             try:
@@ -237,7 +243,11 @@ def check_page(
             with ui.row().classes("mm-launch"):
                 ui.label("Research with").classes("mm-launch-label")
                 picker = (
-                    ui.select(list(services.research_models), value=services.research_models[0])
+                    ui.select(
+                        list(services.research_models),
+                        value=chosen["model"],
+                        on_change=lambda event: chosen.update(model=event.value),
+                    )
                     .props("outlined dense")
                     .classes("mm-picker")
                     .mark("model-picker")

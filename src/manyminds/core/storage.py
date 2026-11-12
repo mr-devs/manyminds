@@ -386,6 +386,7 @@ class Store:
         when the app last closed. It is left for the user to try again.
         """
         message = "Stopped because the app was closed."
+        stamp = self._now()
         with self._transaction() as db:
             rows = db.execute(
                 "SELECT id FROM jobs WHERE status IN (?, ?)", (JobStatus.QUEUED, JobStatus.RUNNING)
@@ -402,9 +403,18 @@ class Store:
                     JobStatus.RUNNING,
                 ),
             )
-        for row in rows:
-            self.add_job_event(row["id"], JobEventKind.FAILED, message)
+            for row in rows:
+                self._insert_event(db, row["id"], JobEventKind.FAILED, message, stamp)
         return len(rows)
+
+    def count_unfinished_jobs(self, check_id: str) -> int:
+        """How many of a check's jobs are still waiting or running."""
+        rows = self._all(
+            "SELECT COUNT(*) AS n FROM jobs JOIN threads ON threads.id = jobs.thread_id "
+            "WHERE threads.check_id = ? AND jobs.status IN (?, ?)",
+            (check_id, JobStatus.QUEUED, JobStatus.RUNNING),
+        )
+        return int(rows[0]["n"])
 
     def get_report(self, job_id: str) -> Report | None:
         rows = self._all("SELECT body FROM reports WHERE job_id = ?", (job_id,))
@@ -415,15 +425,25 @@ class Store:
     def add_job_event(self, job_id: str, kind: JobEventKind, detail: str = "") -> JobEvent:
         stamp = self._now()
         with self._transaction() as db:
-            (seq,) = db.execute(
-                "SELECT COALESCE(MAX(seq), 0) + 1 FROM job_events WHERE job_id = ?", (job_id,)
-            ).fetchone()
-            db.execute(
-                "INSERT INTO job_events (job_id, seq, kind, detail, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (job_id, seq, kind, detail, stamp.isoformat()),
-            )
+            seq = self._insert_event(db, job_id, kind, detail, stamp)
         return JobEvent(job_id=job_id, seq=seq, kind=kind, detail=detail, created_at=stamp)
+
+    def _insert_event(
+        self,
+        db: sqlite3.Connection,
+        job_id: str,
+        kind: JobEventKind,
+        detail: str,
+        stamp: datetime,
+    ) -> int:
+        (seq,) = db.execute(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM job_events WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        db.execute(
+            "INSERT INTO job_events (job_id, seq, kind, detail, created_at) VALUES (?, ?, ?, ?, ?)",
+            (job_id, seq, kind, detail, stamp.isoformat()),
+        )
+        return int(seq)
 
     def list_job_events(self, job_id: str, *, after: int = 0) -> list[JobEvent]:
         """A job's transcript in order, optionally only the entries numbered above `after`."""
