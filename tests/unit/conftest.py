@@ -7,12 +7,17 @@ from manyminds.core.events import EventBus
 from manyminds.core.jobs import JobManager
 from manyminds.core.models import SearchEngine
 from manyminds.core.storage import Store
-from support import RecordingModel
+from support import Faults, RecordingModel, flaky_connection
 
 
 @pytest.fixture
-def store() -> Iterator[Store]:
-    opened = Store(":memory:")
+def faults() -> Faults:
+    return Faults()
+
+
+@pytest.fixture
+def store(faults: Faults) -> Iterator[Store]:
+    opened = Store(":memory:", connection_factory=flaky_connection(faults))
     yield opened
     opened.close()
 

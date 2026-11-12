@@ -169,14 +169,20 @@ async def test_launch_uses_the_edited_list(
     assert [call["lead"] for call in model.research_calls] == ["Keep me", "Edited lead"]
 
 
-async def test_editing_a_lead_to_blank_is_refused(service: CheckService, store: Store) -> None:
+async def test_launch_is_refused_while_a_lead_is_empty(
+    service: CheckService, store: Store, model: RecordingModel
+) -> None:
     check = await service.create_check(TEXT)
-    lead = store.list_draft_leads(check.id)[0]
+    first, second = store.list_draft_leads(check.id)
 
-    with pytest.raises(ValueError, match="lead"):
-        service.update_lead(lead.id, "   ")
+    service.update_lead(second.id, "   ")
 
-    assert store.list_draft_leads(check.id)[0].text == lead.text
+    assert [lead.text for lead in store.list_draft_leads(check.id)] == [first.text, ""]
+    with pytest.raises(ValueError, match=r"A lead is empty\. Fill it in or remove it\."):
+        service.launch(check.id, ["vendor/research-model"])
+    assert store.list_threads(check.id) == []
+    assert len(store.list_draft_leads(check.id)) == 2
+    assert model.research_calls == []
 
 
 async def test_launch_needs_a_model(service: CheckService, store: Store) -> None:

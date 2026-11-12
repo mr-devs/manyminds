@@ -6,7 +6,7 @@ from nicegui.testing import User, user_simulation
 from manyminds.core.services import Services, build_services
 from manyminds.core.storage import Store
 from manyminds.ui.app import build_root
-from support import RecordingModel
+from support import Faults, RecordingModel, flaky_connection
 
 RESEARCH_MODELS = ["vendor/research-model", "vendor/other-model"]
 
@@ -17,8 +17,13 @@ def model() -> RecordingModel:
 
 
 @pytest.fixture
-def services(model: RecordingModel) -> Iterator[Services]:
-    store = Store(":memory:")
+def faults() -> Faults:
+    return Faults()
+
+
+@pytest.fixture
+def services(model: RecordingModel, faults: Faults) -> Iterator[Services]:
+    store = Store(":memory:", connection_factory=flaky_connection(faults))
     yield build_services(
         store=store,
         model=model,

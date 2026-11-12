@@ -1,6 +1,7 @@
 """Shared test doubles and helpers."""
 
 import asyncio
+import sqlite3
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -116,3 +117,53 @@ class RecordingModel:
             return ResearchResult(report=self.reports.get(lead) or report_for(lead))
         finally:
             self.active -= 1
+
+
+@dataclass
+class _Fault:
+    sql_part: str
+    param: object
+    times: int | None
+    skip: int
+
+
+class Faults:
+    """Database failures for a test to inject, matched against the SQL being run."""
+
+    def __init__(self) -> None:
+        self._rules: list[_Fault] = []
+
+    def fail(
+        self, sql_part: str, *, param: object = None, times: int | None = 1, skip: int = 0
+    ) -> None:
+        """Fail statements containing sql_part (and, if given, having param among their values).
+
+        The first `skip` matches succeed; the next `times` fail (None means every one).
+        """
+        self._rules.append(_Fault(sql_part, param, times, skip))
+
+    def check(self, sql: str, parameters: Sequence[Any]) -> None:
+        for rule in self._rules:
+            if rule.sql_part not in sql:
+                continue
+            if rule.param is not None and rule.param not in list(parameters):
+                continue
+            if rule.skip > 0:
+                rule.skip -= 1
+                continue
+            if rule.times is None:
+                raise sqlite3.OperationalError("injected fault")
+            if rule.times > 0:
+                rule.times -= 1
+                raise sqlite3.OperationalError("injected fault")
+
+
+def flaky_connection(faults: Faults) -> type[sqlite3.Connection]:
+    """A real SQLite connection class that fails when the given faults say so."""
+
+    class FlakyConnection(sqlite3.Connection):
+        def execute(self, sql: str, parameters: Any = (), /) -> sqlite3.Cursor:
+            faults.check(sql, parameters)
+            return super().execute(sql, parameters)
+
+    return FlakyConnection
