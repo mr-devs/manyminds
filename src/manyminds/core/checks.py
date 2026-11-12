@@ -9,7 +9,6 @@ from manyminds.core.models import (
     ErrorKind,
     Job,
     JobStatus,
-    LeadOrigin,
     SearchEngine,
     Thread,
     ThreadStatus,
@@ -19,6 +18,10 @@ from manyminds.core.storage import Store
 
 INITIAL_LEADS = 10
 TITLE_LENGTH = 60
+
+
+class NothingToLaunchError(ValueError):
+    """There are no draft leads left, for example because another tab launched them."""
 
 
 def _squash(text: str) -> str:
@@ -76,14 +79,12 @@ class CheckService:
         if not leads:
             raise ModelError(ErrorKind.INVALID_OUTPUT, "No leads could be generated for this text.")
         title = decomposition.title.strip() or _squash(text)[:TITLE_LENGTH]
-        check = self.store.create_check(title=title, source_text=text, instructions=instructions)
-        for lead in leads:
-            self.store.add_lead(check.id, lead, LeadOrigin.GENERATED)
-        return check
+        return self.store.create_check_with_leads(
+            title=title, source_text=text, instructions=instructions, leads=leads
+        )
 
     def update_lead(self, lead_id: str, text: str) -> None:
-        if not text.strip():
-            raise ValueError("A lead cannot be empty")
+        """Save a draft lead's wording. It may be left empty, but then it cannot be launched."""
         self.store.update_lead_text(lead_id, text.strip())
 
     def remove_lead(self, lead_id: str) -> None:
@@ -95,20 +96,18 @@ class CheckService:
             raise ValueError("Choose at least one model")
         leads = self.store.list_draft_leads(check_id)
         if not leads:
-            raise ValueError("There is no lead to research")
+            raise NothingToLaunchError("There is no lead to research")
+        if any(not lead.text.strip() for lead in leads):
+            raise ValueError("A lead is empty. Fill it in or remove it.")
         check = self.store.get_check(check_id)
-        threads = []
-        for lead in leads:
-            thread = self.store.launch_lead(lead.id)
-            threads.append(thread)
-            for model in models:
-                job = self.store.create_job(
-                    thread.id,
-                    model=model,
-                    search_engine=self._search_engine,
-                    instructions=check.instructions,
-                )
-                self.jobs.start(job.id)
+        threads, jobs = self.store.launch_leads(
+            check_id,
+            models=models,
+            search_engine=self._search_engine,
+            instructions=check.instructions,
+        )
+        for job in jobs:
+            self.jobs.start(job.id)
         return threads
 
     def thread_status(self, thread_id: str) -> ThreadStatus:

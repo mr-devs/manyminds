@@ -74,8 +74,10 @@ in the report to the owner which tests changed and why.
 Supporting rules:
 
 - Expected values in tests are written by hand, never computed by calling the code under test.
-- Fake only at real boundaries: HTTP transport, keychain, clock. Never assert on a mock's own
-  behaviour.
+- Fake only at real boundaries: HTTP transport, keychain, clock, the SQLite connection (use
+  `Faults` and `flaky_connection` from `tests/support.py` to inject storage failures), and
+  calls that go out to the browser. Never replace the app's own methods, and never assert on
+  a mock's own behaviour.
 - No network in the default suite. Core logic is tested against `FakeModelClient`. The
   OpenRouter adapter is tested against fixtures in `tests/adapter/fixtures/`, including
   malformed output, timeouts, rate limits and refusals.

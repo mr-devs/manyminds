@@ -92,12 +92,24 @@ def _utc_now() -> datetime:
 
 
 class Store:
-    """All persistence. Calls are short and safe to make from any thread."""
+    """All persistence. Calls are short and safe to make from any thread.
 
-    def __init__(self, path: Path | str, *, now: Callable[[], datetime] = _utc_now) -> None:
+    Every write runs in a transaction that is rolled back if anything in it fails, so a
+    failure never leaves half a change behind or the connection unusable.
+    """
+
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        now: Callable[[], datetime] = _utc_now,
+        connection_factory: type[sqlite3.Connection] = sqlite3.Connection,
+    ) -> None:
         self._now = now
         self._lock = threading.RLock()
-        self._db = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
+        self._db = sqlite3.connect(
+            str(path), check_same_thread=False, isolation_level=None, factory=connection_factory
+        )
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA foreign_keys = ON")
         self._migrate()
@@ -117,20 +129,22 @@ class Store:
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
-        """Several writes that take effect together or not at all."""
+        """Several statements that take effect together or not at all."""
         with self._lock:
             self._db.execute("BEGIN")
             try:
                 yield self._db
+                self._db.execute("COMMIT")
             except BaseException:
-                self._db.execute("ROLLBACK")
+                # Also reached when COMMIT itself fails, which leaves the transaction open.
+                if self._db.in_transaction:
+                    self._db.rollback()
                 raise
-            self._db.execute("COMMIT")
 
-    def _execute(self, sql: str, parameters: Sequence[Any] = ()) -> int:
-        """Run one write and return how many rows it changed."""
-        with self._lock:
-            return self._db.execute(sql, parameters).rowcount
+    def _write(self, sql: str, parameters: Sequence[Any]) -> int:
+        """Run one write in its own transaction and return how many rows it changed."""
+        with self._transaction() as db:
+            return db.execute(sql, parameters).rowcount
 
     def _all(self, sql: str, parameters: Sequence[Any] = ()) -> list[sqlite3.Row]:
         with self._lock:
@@ -148,11 +162,23 @@ class Store:
     # -- checks -----------------------------------------------------------------------
 
     def create_check(self, *, title: str, source_text: str, instructions: str) -> Check:
-        check_id, stamp = uuid.uuid4().hex, self._stamp()
-        self._execute(
-            "INSERT INTO checks VALUES (?, ?, ?, ?, ?, ?)",
-            (check_id, title, source_text, instructions, stamp, stamp),
+        return self.create_check_with_leads(
+            title=title, source_text=source_text, instructions=instructions, leads=[]
         )
+
+    def create_check_with_leads(
+        self, *, title: str, source_text: str, instructions: str, leads: Sequence[str]
+    ) -> Check:
+        """Save a check and its generated leads together, or not at all."""
+        check_id, stamp = uuid.uuid4().hex, self._stamp()
+        with self._transaction() as db:
+            db.execute(
+                "INSERT INTO checks (id, title, source_text, instructions, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (check_id, title, source_text, instructions, stamp, stamp),
+            )
+            for text in leads:
+                self._insert_lead(db, check_id, text, LeadOrigin.GENERATED)
         return self.get_check(check_id)
 
     def get_check(self, check_id: str) -> Check:
@@ -166,16 +192,23 @@ class Store:
     # -- leads ------------------------------------------------------------------------
 
     def add_lead(self, check_id: str, text: str, origin: LeadOrigin) -> Lead:
-        lead_id = uuid.uuid4().hex
-        with self._lock:
-            (position,) = self._db.execute(
-                "SELECT COALESCE(MAX(position), -1) + 1 FROM leads WHERE check_id = ?", (check_id,)
-            ).fetchone()
-            self._db.execute(
-                "INSERT INTO leads VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (lead_id, check_id, text, position, origin, LeadState.DRAFT, self._stamp()),
-            )
+        with self._transaction() as db:
+            lead_id = self._insert_lead(db, check_id, text, origin)
         return self._get_lead(lead_id)
+
+    def _insert_lead(
+        self, db: sqlite3.Connection, check_id: str, text: str, origin: LeadOrigin
+    ) -> str:
+        lead_id = uuid.uuid4().hex
+        (position,) = db.execute(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM leads WHERE check_id = ?", (check_id,)
+        ).fetchone()
+        db.execute(
+            "INSERT INTO leads (id, check_id, text, position, origin, state, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (lead_id, check_id, text, position, origin, LeadState.DRAFT, self._stamp()),
+        )
+        return lead_id
 
     def _get_lead(self, lead_id: str) -> Lead:
         row = self._one("SELECT * FROM leads WHERE id = ?", (lead_id,), f"lead {lead_id}")
@@ -190,7 +223,7 @@ class Store:
 
     def update_lead_text(self, lead_id: str, text: str) -> None:
         """Reword a draft lead. A launched lead is frozen."""
-        changed = self._execute(
+        changed = self._write(
             "UPDATE leads SET text = ? WHERE id = ? AND state = ?", (text, lead_id, LeadState.DRAFT)
         )
         if not changed:
@@ -198,7 +231,7 @@ class Store:
 
     def remove_lead(self, lead_id: str) -> None:
         """Delete a draft lead. A launched lead, and the research under it, stays."""
-        changed = self._execute(
+        changed = self._write(
             "DELETE FROM leads WHERE id = ? AND state = ?", (lead_id, LeadState.DRAFT)
         )
         if not changed:
@@ -207,17 +240,45 @@ class Store:
     # -- threads ----------------------------------------------------------------------
 
     def launch_lead(self, lead_id: str) -> Thread:
-        thread_id = uuid.uuid4().hex
         with self._transaction() as db:
-            lead = self._get_lead(lead_id)
-            if lead.state is not LeadState.DRAFT:
-                raise NotFoundError(f"draft lead {lead_id}")
-            db.execute("UPDATE leads SET state = ? WHERE id = ?", (LeadState.LAUNCHED, lead_id))
-            db.execute(
-                "INSERT INTO threads VALUES (?, ?, ?, ?, ?)",
-                (thread_id, lead.check_id, lead.id, lead.text, self._stamp()),
-            )
+            thread_id = self._launch(db, self._get_lead(lead_id))
         return self.get_thread(thread_id)
+
+    def _launch(self, db: sqlite3.Connection, lead: Lead) -> str:
+        if lead.state is not LeadState.DRAFT:
+            raise NotFoundError(f"draft lead {lead.id}")
+        thread_id = uuid.uuid4().hex
+        db.execute("UPDATE leads SET state = ? WHERE id = ?", (LeadState.LAUNCHED, lead.id))
+        db.execute(
+            "INSERT INTO threads (id, check_id, lead_id, lead_text, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (thread_id, lead.check_id, lead.id, lead.text, self._stamp()),
+        )
+        return thread_id
+
+    def launch_leads(
+        self,
+        check_id: str,
+        *,
+        models: Sequence[str],
+        search_engine: SearchEngine,
+        instructions: str,
+    ) -> tuple[list[Thread], list[Job]]:
+        """Turn every draft lead into a thread with one queued job per model, all or nothing."""
+        thread_ids: list[str] = []
+        job_ids: list[str] = []
+        with self._transaction() as db:
+            for lead in self.list_draft_leads(check_id):
+                thread_id = self._launch(db, lead)
+                thread_ids.append(thread_id)
+                job_ids += [
+                    self._insert_job(db, thread_id, model, search_engine, instructions)
+                    for model in models
+                ]
+        return (
+            [self.get_thread(thread_id) for thread_id in thread_ids],
+            [self.get_job(job_id) for job_id in job_ids],
+        )
 
     def get_thread(self, thread_id: str) -> Thread:
         row = self._one("SELECT * FROM threads WHERE id = ?", (thread_id,), f"thread {thread_id}")
@@ -234,9 +295,23 @@ class Store:
     def create_job(
         self, thread_id: str, *, model: str, search_engine: SearchEngine, instructions: str
     ) -> Job:
+        with self._transaction() as db:
+            job_id = self._insert_job(db, thread_id, model, search_engine, instructions)
+        return self.get_job(job_id)
+
+    def _insert_job(
+        self,
+        db: sqlite3.Connection,
+        thread_id: str,
+        model: str,
+        search_engine: SearchEngine,
+        instructions: str,
+    ) -> str:
         job_id = uuid.uuid4().hex
-        self._execute(
-            "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, 1, NULL, NULL, ?, NULL, NULL)",
+        db.execute(
+            "INSERT INTO jobs "
+            "(id, thread_id, model, status, search_engine, instructions, attempt, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
             (
                 job_id,
                 thread_id,
@@ -247,7 +322,7 @@ class Store:
                 self._stamp(),
             ),
         )
-        return self.get_job(job_id)
+        return job_id
 
     def get_job(self, job_id: str) -> Job:
         row = self._one("SELECT * FROM jobs WHERE id = ?", (job_id,), f"job {job_id}")
@@ -260,7 +335,7 @@ class Store:
         return [Job.model_validate(dict(row)) for row in rows]
 
     def mark_job_running(self, job_id: str) -> Job:
-        self._execute(
+        self._write(
             "UPDATE jobs SET status = ?, started_at = ? WHERE id = ?",
             (JobStatus.RUNNING, self._stamp(), job_id),
         )
@@ -271,7 +346,7 @@ class Store:
         with self._transaction() as db:
             self.get_job(job_id)
             db.execute(
-                "INSERT OR REPLACE INTO reports VALUES (?, ?, ?)",
+                "INSERT OR REPLACE INTO reports (job_id, body, created_at) VALUES (?, ?, ?)",
                 (job_id, report.model_dump_json(), stamp),
             )
             db.execute(
@@ -281,10 +356,11 @@ class Store:
         return self.get_job(job_id)
 
     def mark_job_failed(self, job_id: str, kind: ErrorKind, message: str) -> Job:
-        self._execute(
+        """Record a failure. A job that already finished stays finished."""
+        self._write(
             "UPDATE jobs SET status = ?, error_kind = ?, error_message = ?, finished_at = ? "
-            "WHERE id = ?",
-            (JobStatus.FAILED, kind, message, self._stamp(), job_id),
+            "WHERE id = ? AND status != ?",
+            (JobStatus.FAILED, kind, message, self._stamp(), job_id, JobStatus.DONE),
         )
         return self.get_job(job_id)
 
@@ -295,16 +371,21 @@ class Store:
     # -- job events -------------------------------------------------------------------
 
     def add_job_event(self, job_id: str, kind: JobEventKind, detail: str = "") -> JobEvent:
-        with self._lock:
-            (seq,) = self._db.execute(
+        stamp = self._now()
+        with self._transaction() as db:
+            (seq,) = db.execute(
                 "SELECT COALESCE(MAX(seq), 0) + 1 FROM job_events WHERE job_id = ?", (job_id,)
             ).fetchone()
-            self._db.execute(
-                "INSERT INTO job_events VALUES (?, ?, ?, ?, ?)",
-                (job_id, seq, kind, detail, self._stamp()),
+            db.execute(
+                "INSERT INTO job_events (job_id, seq, kind, detail, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (job_id, seq, kind, detail, stamp.isoformat()),
             )
-        return self.list_job_events(job_id)[-1]
+        return JobEvent(job_id=job_id, seq=seq, kind=kind, detail=detail, created_at=stamp)
 
-    def list_job_events(self, job_id: str) -> list[JobEvent]:
-        rows = self._all("SELECT * FROM job_events WHERE job_id = ? ORDER BY seq", (job_id,))
+    def list_job_events(self, job_id: str, *, after: int = 0) -> list[JobEvent]:
+        """A job's transcript in order, optionally only the entries numbered above `after`."""
+        rows = self._all(
+            "SELECT * FROM job_events WHERE job_id = ? AND seq > ? ORDER BY seq", (job_id, after)
+        )
         return [JobEvent.model_validate(dict(row)) for row in rows]

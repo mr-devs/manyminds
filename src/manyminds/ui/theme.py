@@ -163,6 +163,7 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
 .mm-evidence { padding: 18px 0; gap: 8px; align-items: stretch; }
 .mm-quote { font-size: 17px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .mm-flag { font-size: 12px; color: var(--mm-notice); }
+.mm-host { font-size: 13px; color: var(--mm-tertiary); }
 
 /* Thread page: a fixed heading with the transcript scrolling beneath it. */
 .mm-tall { height: 100vh; padding-top: 56px; padding-bottom: 0; flex-wrap: nowrap; }

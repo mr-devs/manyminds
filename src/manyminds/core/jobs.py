@@ -52,10 +52,15 @@ class JobManager:
         job = self._store.get_job(job_id)
         thread = self._store.get_thread(job.thread_id)
         check = self._store.get_check(thread.check_id)
+        update = JobUpdated(check_id=check.id, thread_id=thread.id, job_id=job_id)
+
+        def record(progress: Progress) -> None:
+            self._store.add_job_event(job_id, progress.kind, progress.detail)
+            self._bus.publish(update)
 
         async with self._slots:
             self._store.mark_job_running(job_id)
-            self._record(job_id, Progress(JobEventKind.STARTED))
+            record(Progress(JobEventKind.STARTED))
             try:
                 result = await self._model.research(
                     thread.lead_text,
@@ -63,23 +68,28 @@ class JobManager:
                     job.instructions,
                     model=job.model,
                     search=job.search_engine,
-                    on_progress=lambda progress: self._record(job_id, progress),
+                    on_progress=record,
                 )
             except ModelError as error:
                 self._fail(job_id, error.kind, error.message)
                 return
             self._store.mark_job_done(job_id, result.report)
-            self._record(job_id, Progress(JobEventKind.FINISHED))
-
-    def _record(self, job_id: str, progress: Progress) -> None:
-        self._store.add_job_event(job_id, progress.kind, progress.detail)
-        job = self._store.get_job(job_id)
-        thread = self._store.get_thread(job.thread_id)
-        self._bus.publish(JobUpdated(check_id=thread.check_id, thread_id=thread.id, job_id=job_id))
+        # The job is finished and saved. Announcing that must not be able to undo it.
+        try:
+            record(Progress(JobEventKind.FINISHED))
+        except Exception as error:
+            logger.error(
+                "Job %s finished but could not record it: %s", job_id, type(error).__name__
+            )
+            self._bus.publish(update)
 
     def _fail(self, job_id: str, kind: ErrorKind, message: str) -> None:
         try:
-            self._store.mark_job_failed(job_id, kind, message)
-            self._record(job_id, Progress(JobEventKind.FAILED, message))
+            job = self._store.mark_job_failed(job_id, kind, message)
+            thread = self._store.get_thread(job.thread_id)
+            self._store.add_job_event(job_id, JobEventKind.FAILED, message)
+            self._bus.publish(
+                JobUpdated(check_id=thread.check_id, thread_id=thread.id, job_id=job_id)
+            )
         except Exception as error:
             logger.error("Job %s could not be marked as failed: %s", job_id, type(error).__name__)

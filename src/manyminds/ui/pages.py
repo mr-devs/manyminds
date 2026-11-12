@@ -1,10 +1,12 @@
 """The pages. Each one reads from the core and re-reads when the core announces a change."""
 
+import logging
 from collections.abc import Callable
 
 from nicegui import Event, ui
 from nicegui.events import ScrollEventArguments, ValueChangeEventArguments
 
+from manyminds.core.checks import NothingToLaunchError
 from manyminds.core.errors import ModelError
 from manyminds.core.events import JobUpdated
 from manyminds.core.models import JobEvent, JobEventKind, Lead
@@ -15,6 +17,8 @@ from manyminds.ui.follow import Follower
 from manyminds.ui.report_view import report_view
 
 JobUpdates = Event[JobUpdated]
+
+logger = logging.getLogger(__name__)
 
 
 def _follow(
@@ -77,6 +81,9 @@ def home_page(services: Services) -> None:
                 check = await services.checks.create_check(text, instructions.value or "")
             except ModelError as error:
                 show_problem(error.message)
+            except Exception as error:
+                logger.error("Creating a check failed: %s", type(error).__name__)
+                show_problem("Something went wrong and nothing was saved. Please try again.")
             else:
                 ui.navigate.to(f"/check/{check.id}")
             finally:
@@ -105,7 +112,10 @@ def check_page(services: Services, updates: JobUpdates, check_id: str) -> None:
 
         def update_status(event: JobUpdated) -> None:
             label = status_labels.get(event.thread_id)
-            if label is not None:
+            if label is None:
+                # A thread this page has not drawn yet: it was launched from another tab.
+                redraw()
+            else:
                 theme.set_status(label, services.checks.thread_status(event.thread_id))
 
         @ui.refreshable
@@ -135,15 +145,18 @@ def check_page(services: Services, updates: JobUpdates, check_id: str) -> None:
                             started = thread.created_at.astimezone().strftime("%H:%M")
                             ui.label(started).classes(theme.MUTED)
 
-        emptied: set[str] = set()
-        """Leads whose box is currently empty; they are not saved until refilled."""
-
-        def stale() -> None:
-            # Another tab launched or removed these leads; show what is really there.
-            notice.set_text("These leads have already been launched.")
+        def tell(message: str) -> None:
+            notice.set_text(message)
             notice.set_visibility(True)
+
+        def redraw() -> None:
             lead_editor.refresh()
             threads.refresh()
+
+        def stale() -> None:
+            # Another tab changed these leads; show what is really there.
+            tell("This list was out of date and has been refreshed.")
+            redraw()
 
         @ui.refreshable
         def lead_editor() -> None:
@@ -151,9 +164,9 @@ def check_page(services: Services, updates: JobUpdates, check_id: str) -> None:
             if not drafts:
                 return
             ui.label("Leads to research").classes(theme.SECTION)
-            with ui.column().classes("gap-0 items-stretch " + theme.RULED):
+            with ui.column().classes("gap-0 items-stretch " + theme.RULED).mark("lead-list"):
                 for index, lead in enumerate(drafts):
-                    _lead_row(services, lead, index, emptied, lead_editor.refresh, stale)
+                    _lead_row(services, lead, index, lead_editor.refresh, stale)
             with ui.row().classes("mm-launch"):
                 picker = (
                     ui.select(list(services.research_models), value=services.research_models[0])
@@ -163,22 +176,20 @@ def check_page(services: Services, updates: JobUpdates, check_id: str) -> None:
                 )
 
                 def go() -> None:
-                    if emptied & {lead.id for lead in store.list_draft_leads(check_id)}:
-                        notice.set_text("A lead is empty. Fill it in or remove it.")
-                        notice.set_visibility(True)
-                        return
                     try:
                         services.checks.launch(check_id, [picker.value] if picker.value else [])
-                    except NotFoundError:
+                    except NothingToLaunchError:
                         stale()
                         return
                     except ValueError as error:
-                        notice.set_text(str(error))
-                        notice.set_visibility(True)
+                        tell(str(error))
+                        return
+                    except Exception as error:
+                        logger.error("Launch failed: %s", type(error).__name__)
+                        tell("Research could not be started. Nothing was changed.")
                         return
                     notice.set_visibility(False)
-                    lead_editor.refresh()
-                    threads.refresh()
+                    redraw()
 
                 ui.button("Go", on_click=go).props("unelevated no-caps").classes(theme.BUTTON)
 
@@ -193,23 +204,17 @@ def _lead_row(
     services: Services,
     lead: Lead,
     index: int,
-    emptied: set[str],
     refresh: Callable[[], object],
     stale: Callable[[], None],
 ) -> None:
     def save(event: ValueChangeEventArguments[str]) -> None:
-        if not (event.value or "").strip():
-            # Not saved, and Go is refused until the box is refilled or the lead removed.
-            emptied.add(lead.id)
-            return
-        emptied.discard(lead.id)
+        # An emptied box is saved as empty; the core refuses to launch it until it is refilled.
         try:
-            services.checks.update_lead(lead.id, event.value)
+            services.checks.update_lead(lead.id, event.value or "")
         except NotFoundError:
             stale()
 
     def remove() -> None:
-        emptied.discard(lead.id)
         try:
             services.checks.remove_lead(lead.id)
         except NotFoundError:
@@ -282,7 +287,7 @@ def thread_page(services: Services, updates: JobUpdates, check_id: str, thread_i
                 ui.label(job.model).classes(theme.MUTED)
 
         shown: dict[str, int] = {}
-        """How many transcript entries of each job are already on the page."""
+        """The number of the last transcript entry of each job already on the page."""
         concluded: set[str] = set()
         """Jobs whose report is already on the page."""
         follower = Follower()
@@ -304,10 +309,9 @@ def thread_page(services: Services, updates: JobUpdates, check_id: str, thread_i
             """Append whatever is new. Earlier entries are never rebuilt."""
             with transcript:
                 for job in store.list_jobs(thread_id):
-                    events = store.list_job_events(job.id)
-                    for event in events[shown.get(job.id, 0) :]:
+                    for event in store.list_job_events(job.id, after=shown.get(job.id, 0)):
                         _transcript_entry(event)
-                    shown[job.id] = len(events)
+                        shown[job.id] = event.seq
                     report = store.get_report(job.id)
                     if report is not None and job.id not in concluded:
                         concluded.add(job.id)
