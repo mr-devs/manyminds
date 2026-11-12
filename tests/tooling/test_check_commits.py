@@ -139,38 +139,27 @@ def test_non_test_commit_may_add_new_files_under_tests(repo: Repo) -> None:
     assert result.returncode == 0
 
 
-def test_approved_test_fix_may_modify_tests(repo: Repo) -> None:
+def test_a_test_commit_may_change_existing_tests(repo: Repo) -> None:
     repo.write("tests/test_thing.py", "def test_thing():\n    assert thing() == 1\n")
     repo.commit("test: thing returns one")
     repo.write("tests/test_thing.py", "def test_thing():\n    assert thing() == 2\n")
-    repo.commit("test-fix: thing should return two\n\nApproved: owner confirmed the spec says two")
+    repo.commit("test: thing should return two")
 
     result = repo.check()
 
     assert result.returncode == 0
 
 
-def test_test_fix_without_approval_line_is_a_violation(repo: Repo) -> None:
+def test_the_old_test_fix_prefix_gets_no_special_treatment(repo: Repo) -> None:
     repo.write("tests/test_thing.py", "def test_thing():\n    assert thing() == 1\n")
     repo.commit("test: thing returns one")
     repo.write("tests/test_thing.py", "def test_thing():\n    assert thing() == 2\n")
-    repo.commit("test-fix: thing should return two")
+    repo.commit("test-fix: thing should return two\n\nApproved: someone said so")
 
     result = repo.check()
 
     assert result.returncode == 1
-    assert "needs a line starting 'Approved:'" in result.stdout
-
-
-def test_test_fix_touching_source_is_a_violation(repo: Repo) -> None:
-    repo.write("tests/test_thing.py", "def test_thing():\n    assert True\n")
-    repo.write("src/thing.py", "def thing():\n    return 1\n")
-    repo.commit("test-fix: adjust\n\nApproved: owner said so")
-
-    result = repo.check()
-
-    assert result.returncode == 1
-    assert "may only touch tests/" in result.stdout
+    assert "modifies an existing test file" in result.stdout
 
 
 def test_only_commits_in_the_given_range_are_checked(repo: Repo) -> None:

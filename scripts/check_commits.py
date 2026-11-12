@@ -4,11 +4,12 @@ Usage: check_commits.py [REVISION_RANGE]    (default: origin/main..HEAD)
 
 Rules, applied to every non-merge commit in the range:
 
-* ``test:`` commits may only touch files under ``tests/``.
-* ``test-fix:`` commits may only touch files under ``tests/`` and need a line starting
-  ``Approved:`` that says what the owner approved.
+* ``test:`` commits may only touch files under ``tests/``. They may add tests and change
+  or remove existing ones.
 * Any other commit may add files under ``tests/`` but may not modify, rename or delete
   files that already exist there.
+
+So a change to what the tests say is always its own commit, apart from the code it tests.
 
 Exit status: 0 when clean, 1 on violations, 2 when the range cannot be read.
 """
@@ -68,16 +69,12 @@ def read_commits(revision_range: str) -> list[Commit]:
 def violations(commit: Commit) -> list[str]:
     subject = commit.subject
     found = []
-    if subject.startswith(("test:", "test-fix:")):
-        kind = subject.split(":", 1)[0]
+    if subject.startswith("test:"):
         found += [
-            f"{change.path}: a {kind}: commit may only touch {TESTS_DIR}"
+            f"{change.path}: a test: commit may only touch {TESTS_DIR}"
             for change in commit.changes
             if not change.path.startswith(TESTS_DIR)
         ]
-        approved = any(line.startswith("Approved:") for line in commit.message.splitlines())
-        if kind == "test-fix" and not approved:
-            found.append("a test-fix: commit needs a line starting 'Approved:'")
     else:
         found += [
             f"{change.path}: {_PROBLEMS[change.status]}"

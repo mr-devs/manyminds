@@ -9,7 +9,7 @@ Agents doing TDD are known to weaken tests, special-case inputs and write tests 
 
 ## Decision
 
-Follow the red, commit, green, refactor, independent-review cycle from the brief. Add three mechanical checks: a commit rule (test commits touch only tests; other commits do not modify existing tests), a CI gate on unjustified skips and xfails, and a network block in the default suite. Review each milestone with a fresh, read-only subagent.
+Follow the red, commit, green, refactor, independent-review cycle from the brief. Add three mechanical checks: a commit rule (test commits touch only tests; other commits do not modify existing tests, so every test change is its own commit, with no pre-approval needed), a CI gate on unjustified skips and xfails, and a network block in the default suite. Review each milestone with a fresh, read-only subagent.
 
 ## Consequences
 

@@ -30,3 +30,6 @@ htmlcov/
 
 # Throwaway spike output
 spikes/out/
+
+# Browser automation output
+.playwright-mcp/

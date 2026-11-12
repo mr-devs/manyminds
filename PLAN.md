@@ -143,10 +143,11 @@ validated `Report`, usage, and the citations the search tool actually returned. 
    that same request. Evidence whose URL the tool never returned is kept but flagged
    `grounded = false` and shown with a visible "not found in search results" label. Where the
    tool returned an excerpt, the quote is checked against it and flagged the same way.
-4. **Rendering.** Model text is rendered as sanitised markdown with images stripped, because an
-   injected instruction could otherwise make the model emit an image URL that leaks the pasted
-   text when the browser loads it. Links are limited to `http` and `https` and open in a new
-   tab. Model text is never passed to `ui.html` unsanitised, `.props()`, or `run_javascript`.
+4. **Rendering.** Model text is shown as plain text. It is never rendered as HTML or markdown
+   and no image is ever loaded from it, because an injected instruction could otherwise make
+   the model emit an image URL that leaks the pasted text when the browser fetches it. Links
+   are limited to `http` and `https` and open in a new tab. Model text is never passed to
+   `ui.html`, `ui.markdown`, `.props()` or `run_javascript`.
 5. Nothing the model outputs starts work. Proposed leads always wait for the user's **Go**.
 
 ### 2.5 Runtime behaviour
@@ -360,7 +361,7 @@ update to this table.
 | # | Milestone | Release | Status |
 |---|---|---|---|
 | 0 | Repository and PyPI name | 0.0.1 | **done 2026-11-11** |
-| 1a | Walking skeleton on the fake model | | not started |
+| 1a | Walking skeleton on the fake model | | **done 2026-11-11** |
 | 1b | Real research through OpenRouter | 0.1.0a1 | not started |
 | 2 | Full lead-list controls | | not started |
 | 3 | Home, check page, persistence across restarts | 0.1.0a2 | not started |
@@ -402,6 +403,32 @@ The smallest end-to-end path, with no key and no network.
 **You will see:** `uv run manyminds --demo` opens the browser. You paste text, get leads, edit
 and remove some, press Go, and watch threads go from queued to working to finished at different
 speeds, with one scripted failure that leaves the rest untouched.
+
+**Outcome (2026-11-11).** Merged; 241 tests pass offline. After the first review the
+interface was redesigned, each thread gained a full, followable agent transcript, and a second
+code review's ten findings were fixed.
+Checked by hand in a real browser: generate, edit, Go, six agents at once with four queued,
+live status changes, the scripted failure leaving the rest untouched, and a report opening
+with grouped evidence and links. No browser console errors.
+
+The independent review found no overfitting. It found four bugs, all fixed test-first: a
+failed write left the database connection stuck in a transaction; removing a launched lead
+from a second tab deleted its thread and report; a storage error inside a job left it
+"running" forever; and clearing a lead's box then pressing Go researched the old wording.
+
+Differences from this plan, for the record:
+
+- **Model text is shown as plain text, not sanitised markdown.** Nothing a model writes is
+  rendered as HTML or markdown anywhere, which is stricter than planned. Markdown can be
+  revisited for conversations in milestone 8.
+- **Database calls run on the event loop**, not in a worker thread. They are sub-millisecond
+  for a single user; revisit if that stops being true.
+- **The check page hosts the lead editor.** After "Generate leads" you land on the check page,
+  edit there, and press Go there, so a half-edited list survives a reload.
+- **Bare `manyminds` still prints the pre-alpha notice.** Only `--demo` starts the app until
+  milestone 1b makes the real one usable.
+- **Deferred to the milestone that needs them:** the on-disk data directory and NiceGUI
+  storage location (3), `Job.usage` (1b), lead `dismissed` state and `source_message_id` (9).
 
 ### Milestone 1b: real research through OpenRouter
 
@@ -581,12 +608,15 @@ fail at TDD (see references) adds the following.
 **The cycle**
 1. **Test list.** Before a milestone, write its behaviours as a checklist from this plan, not
    from an implementation idea. Work one item at a time.
-2. **Red.** Write the tests. Run them. They must fail on an assertion about missing behaviour,
-   not on an import or syntax error. I show you the failing output. A new test that passes
+2. **Red.** Write the tests. Run them. They must fail because the behaviour is missing (an
+   assertion, or the import of a module that does not exist yet), not because of a mistake in
+   the test. I show you the failing output. A new test that passes
    immediately is a defect in the test.
 3. **Commit the failing tests** alone (`test: ...`).
-4. **Green.** Smallest implementation. No editing, weakening, skipping or deleting tests. No
-   special-casing of test inputs. If a test looks wrong, I stop and ask you.
+4. **Green.** Smallest implementation. No special-casing of test inputs, and no weakening,
+   skipping or deleting a test just to get to green. Tests that are wrong, or that pin a
+   requirement you have changed, are edited in their own `test:` commit and reported to you
+   (your decision of 2026-11-11; no pre-approval is needed).
 5. **Refactor** on green, then commit (`refactor: ...`), separately from behaviour changes.
 6. **Milestone review** by a fresh, read-only subagent that has not seen the implementation
    work. It gets the spec section and the diff, and is asked two things: does the code overfit
@@ -601,8 +631,8 @@ fail at TDD (see references) adds the following.
 
 **Mechanical enforcement** (kept deliberately small)
 - `scripts/check_commits.py`, run in CI and locally: a `test:` commit may only touch `tests/`;
-  any other commit may not modify or delete existing test files. A test change you have
-  approved uses the prefix `test-fix:` and names the approval in the message.
+  any other commit may not modify or delete existing test files. Every change to the tests is
+  therefore its own commit.
 - The skip/xfail gate: CI fails on any skipped or expected-failure test whose reason does not
   begin with `JUSTIFIED:`.
 - The default suite blocks network access; a test that opens a socket fails.

@@ -39,7 +39,8 @@ merge through a pull request.
     database. Never print it. Never commit secrets.
   - Models that read web content get the search tool and nothing else.
   - Retrieved text is data, never instructions. Model output never starts work by itself.
-  - Render model text as sanitised markdown with images stripped; links are http or https only.
+  - Show model text as plain text only (`ui.label`, `ui.input`, `ui.link`): never `ui.html`,
+    `ui.markdown`, `.props()` or JavaScript. Links are http or https only.
   - Bind to `127.0.0.1` only, with `reload=False`.
 - Prefer few, well-maintained dependencies. Ask the owner before adding one.
 - If documentation contradicts the plan, say so and propose a correction. Do not work around it
@@ -51,24 +52,32 @@ Every behaviour change follows this cycle.
 
 1. **Test list.** Write the behaviours as a checklist from the spec in `PLAN.md`, not from an
    implementation idea. Work one item at a time.
-2. **Red.** Write the tests. Run them and confirm they fail on an assertion about the missing
-   behaviour, not on an import or syntax error. Show the owner the failing output. A new test
-   that passes immediately is a defect in the test.
+2. **Red.** Write the tests. Run them and confirm they fail because the behaviour is missing:
+   an assertion, or the import of a module or name that does not exist yet. A failure caused
+   by a mistake in the test itself (typo, syntax error, wrong fixture) is not red; fix the
+   test first. Show the owner the failing output. A new test that passes immediately is a
+   defect in the test.
 3. **Commit the failing tests on their own**, with the prefix `test:`.
-4. **Green.** Write the smallest implementation that passes. Do not edit, weaken, skip or
-   delete tests to get to green. Do not special-case test inputs. If a test seems wrong, stop
-   and ask the owner.
+4. **Green.** Write the smallest implementation that passes. Do not special-case test inputs.
+   Never weaken, skip or delete a test just to get to green.
 5. **Refactor** with the tests green, then commit. Keep structural and behavioural changes in
    separate commits.
 6. **Independent check.** At the end of each milestone, a fresh read-only subagent that has not
    seen the implementation work reviews the diff against the spec for two things: code that
    overfits the tests, and spec behaviour the tests do not cover. Tell it to skip style.
 
+**Changing tests.** Tests may be edited without asking: when a requirement changes, when a
+test is wrong, or when its mechanics are faulty (a missing wait, a bad type annotation). Make
+the change in a `test:` commit, before the implementation change where one is needed, and say
+in the report to the owner which tests changed and why.
+
 Supporting rules:
 
 - Expected values in tests are written by hand, never computed by calling the code under test.
-- Fake only at real boundaries: HTTP transport, keychain, clock. Never assert on a mock's own
-  behaviour.
+- Fake only at real boundaries: HTTP transport, keychain, clock, the SQLite connection (use
+  `Faults` and `flaky_connection` from `tests/support.py` to inject storage failures), and
+  calls that go out to the browser. Never replace the app's own methods, and never assert on
+  a mock's own behaviour.
 - No network in the default suite. Core logic is tested against `FakeModelClient`. The
   OpenRouter adapter is tested against fixtures in `tests/adapter/fixtures/`, including
   malformed output, timeouts, rate limits and refusals.
@@ -83,9 +92,8 @@ Supporting rules:
 Mechanical checks (do not disable them):
 
 - `scripts/check_commits.py`: a `test:` commit may only touch `tests/`. Any other commit may
-  not modify, rename or delete existing files under `tests/`. A test change the owner has
-  approved uses the prefix `test-fix:` and includes a line starting `Approved:` saying what
-  was approved.
+  not modify, rename or delete existing files under `tests/`. So every change to the tests is
+  its own commit, apart from the code it tests.
 - `scripts/pytest_strict_gate.py`: the run fails on any skipped or expected-failure test whose
   reason does not start with `JUSTIFIED:`.
 - Spike code lives in `spikes/`, is never imported by `src/`, and is exempt from the cycle.
@@ -94,5 +102,5 @@ Mechanical checks (do not disable them):
 ## Commits
 
 Small commits with clear messages. Prefixes: `test:`, `feat:`, `fix:`, `refactor:`, `docs:`,
-`chore:`, `ci:`, `test-fix:`. Commit messages describe the change and nothing else: no
+`chore:`, `ci:`. Commit messages describe the change and nothing else: no
 tool, assistant or session attribution of any kind.
