@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -53,8 +54,12 @@ async def test_an_event_split_across_network_chunks_is_still_parsed() -> None:
     body = sse({"type": "response.created", "response": {"status": "in_progress"}})
     half = len(body) // 2
 
+    async def chunks() -> AsyncIterator[bytes]:
+        yield body[:half]
+        yield body[half:]
+
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=iter([body[:half], body[half:]]))
+        return httpx.Response(200, content=chunks())
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         events = [event async for event in Transport(API_KEY, http).stream({"model": "m"})]

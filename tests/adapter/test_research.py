@@ -10,7 +10,7 @@ from manyminds.core.errors import ModelError
 from manyminds.core.models import ErrorKind, JobEventKind, SearchEngine, Stance
 from manyminds.core.openrouter.adapter import OpenRouterModelClient
 from manyminds.core.openrouter.transport import Transport
-from manyminds.core.ports import Progress, ResearchResult, Usage
+from manyminds.core.ports import Progress, ResearchResult
 from openrouter_wire import (
     API_KEY,
     Wire,
@@ -274,9 +274,9 @@ async def test_usage_is_summed_over_both_calls() -> None:
 
     result = await research(wire)
 
-    assert result.usage == Usage(
-        input_tokens=6772, output_tokens=1096, cost=pytest.approx(0.00901378), searches=2
-    )
+    assert (result.usage.input_tokens, result.usage.output_tokens) == (6772, 1096)
+    assert result.usage.searches == 2
+    assert result.usage.cost == pytest.approx(0.00901378)
 
 
 BAD_REPORTS: list[Any] = [
