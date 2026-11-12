@@ -34,6 +34,10 @@ beneath them, for example to summarise what the research threads found.
 - A check cannot be deleted while a reply to it is being written.
 - Links the user puts in a new message are opened first, held to the sites in that message,
   exactly as for the first message (decision 17).
+- **Lead generation happens in the open.** The check is saved as soon as the user sends the
+  first message, with its reply still to come, and the page moves into the conversation.
+  Each step is saved under the reply and shown as it happens. If it fails, the check and the
+  reason stay, with a way to try again. A check opens with five leads at most.
 - Replies are structured (`reply`, `leads`) and validated, with one repair attempt. The reply
   text is shown as plain text.
 - A reply still awaited when the app closes is marked as stopped at the next start.

@@ -523,6 +523,12 @@ milestones 8 and 9 in a different shape.
   `created_at`) and `Lead.message_id`. Schema version 3; older checks gain a conversation.
 - Links that will not open are looked for another way, and images are shown to the model
   and described; the opening reply says what was read (decision 19).
+- Pressing **Generate leads** saves the check and moves into the conversation at once. The
+  leads are worked out in the background; each step (links opened, searches, images looked
+  at) is saved under the reply (`message_steps`, schema version 4), shown as it happens, and
+  kept afterwards under "How these leads were made". A failed attempt stays in the
+  conversation with **Try again**.
+- A check opens with five leads at most. A check can be deleted from the sidebar.
 - **Not done:** recording the cost of chat replies; retrying a failed reply with one press
   (send the message again); choosing the chat model (it is the lead-generation model);
   "Generate more leads" as a button (ask for more in the chat).
