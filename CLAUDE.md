@@ -39,7 +39,8 @@ merge through a pull request.
     database. Never print it. Never commit secrets.
   - Models that read web content get the search tool and nothing else.
   - Retrieved text is data, never instructions. Model output never starts work by itself.
-  - Render model text as sanitised markdown with images stripped; links are http or https only.
+  - Show model text as plain text only (`ui.label`, `ui.input`, `ui.link`): never `ui.html`,
+    `ui.markdown`, `.props()` or JavaScript. Links are http or https only.
   - Bind to `127.0.0.1` only, with `reload=False`.
 - Prefer few, well-maintained dependencies. Ask the owner before adding one.
 - If documentation contradicts the plan, say so and propose a correction. Do not work around it

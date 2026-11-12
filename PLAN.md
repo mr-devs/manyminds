@@ -143,10 +143,11 @@ validated `Report`, usage, and the citations the search tool actually returned. 
    that same request. Evidence whose URL the tool never returned is kept but flagged
    `grounded = false` and shown with a visible "not found in search results" label. Where the
    tool returned an excerpt, the quote is checked against it and flagged the same way.
-4. **Rendering.** Model text is rendered as sanitised markdown with images stripped, because an
-   injected instruction could otherwise make the model emit an image URL that leaks the pasted
-   text when the browser loads it. Links are limited to `http` and `https` and open in a new
-   tab. Model text is never passed to `ui.html` unsanitised, `.props()`, or `run_javascript`.
+4. **Rendering.** Model text is shown as plain text. It is never rendered as HTML or markdown
+   and no image is ever loaded from it, because an injected instruction could otherwise make
+   the model emit an image URL that leaks the pasted text when the browser fetches it. Links
+   are limited to `http` and `https` and open in a new tab. Model text is never passed to
+   `ui.html`, `ui.markdown`, `.props()` or `run_javascript`.
 5. Nothing the model outputs starts work. Proposed leads always wait for the user's **Go**.
 
 ### 2.5 Runtime behaviour
@@ -360,7 +361,7 @@ update to this table.
 | # | Milestone | Release | Status |
 |---|---|---|---|
 | 0 | Repository and PyPI name | 0.0.1 | **done 2026-11-11** |
-| 1a | Walking skeleton on the fake model | | not started |
+| 1a | Walking skeleton on the fake model | | built and reviewed; pull request open, waiting on one approval (see notes under the milestone) |
 | 1b | Real research through OpenRouter | 0.1.0a1 | not started |
 | 2 | Full lead-list controls | | not started |
 | 3 | Home, check page, persistence across restarts | 0.1.0a2 | not started |
@@ -402,6 +403,32 @@ The smallest end-to-end path, with no key and no network.
 **You will see:** `uv run manyminds --demo` opens the browser. You paste text, get leads, edit
 and remove some, press Go, and watch threads go from queued to working to finished at different
 speeds, with one scripted failure that leaves the rest untouched.
+
+**Outcome (2026-11-11).** Built on branch `m1a-walking-skeleton`; 192 tests pass offline.
+Checked by hand in a real browser: generate, edit, Go, six agents at once with four queued,
+live status changes, the scripted failure leaving the rest untouched, and a report opening
+with grouped evidence and links. No browser console errors.
+
+The independent review found no overfitting. It found four bugs, all fixed test-first: a
+failed write left the database connection stuck in a transaction; removing a launched lead
+from a second tab deleted its thread and report; a storage error inside a job left it
+"running" forever; and clearing a lead's box then pressing Go researched the old wording.
+
+Differences from this plan, for the record:
+
+- **Model text is shown as plain text, not sanitised markdown.** Nothing a model writes is
+  rendered as HTML or markdown anywhere, which is stricter than planned. Markdown can be
+  revisited for conversations in milestone 8.
+- **Database calls run on the event loop**, not in a worker thread. They are sub-millisecond
+  for a single user; revisit if that stops being true.
+- **The check page hosts the lead editor.** After "Generate leads" you land on the check page,
+  edit there, and press Go there, so a half-edited list survives a reload.
+- **Bare `manyminds` still prints the pre-alpha notice.** Only `--demo` starts the app until
+  milestone 1b makes the real one usable.
+- **Deferred to the milestone that needs them:** the on-disk data directory and NiceGUI
+  storage location (3), `Job.usage` (1b), lead `dismissed` state and `source_message_id` (9).
+- **Waiting on you:** three lines in committed tests fail strict type checking although they
+  run correctly. Fixing them means editing tests, which needs your approval.
 
 ### Milestone 1b: real research through OpenRouter
 

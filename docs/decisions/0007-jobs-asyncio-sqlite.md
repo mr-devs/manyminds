@@ -13,4 +13,4 @@ A `JobManager` runs jobs as asyncio tasks under a concurrency limit, with each j
 
 ## Consequences
 
-No extra dependency for storage. Database calls are short and run off the event loop. Schema changes need a migration each time.
+No extra dependency for storage. Database calls are short and run on the event loop for now; move them to a worker thread if they ever become slow. Schema changes need a migration each time.
