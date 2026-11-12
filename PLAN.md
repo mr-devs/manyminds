@@ -581,8 +581,9 @@ fail at TDD (see references) adds the following.
 **The cycle**
 1. **Test list.** Before a milestone, write its behaviours as a checklist from this plan, not
    from an implementation idea. Work one item at a time.
-2. **Red.** Write the tests. Run them. They must fail on an assertion about missing behaviour,
-   not on an import or syntax error. I show you the failing output. A new test that passes
+2. **Red.** Write the tests. Run them. They must fail because the behaviour is missing (an
+   assertion, or the import of a module that does not exist yet), not because of a mistake in
+   the test. I show you the failing output. A new test that passes
    immediately is a defect in the test.
 3. **Commit the failing tests** alone (`test: ...`).
 4. **Green.** Smallest implementation. No editing, weakening, skipping or deleting tests. No

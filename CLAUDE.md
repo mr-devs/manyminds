@@ -51,9 +51,11 @@ Every behaviour change follows this cycle.
 
 1. **Test list.** Write the behaviours as a checklist from the spec in `PLAN.md`, not from an
    implementation idea. Work one item at a time.
-2. **Red.** Write the tests. Run them and confirm they fail on an assertion about the missing
-   behaviour, not on an import or syntax error. Show the owner the failing output. A new test
-   that passes immediately is a defect in the test.
+2. **Red.** Write the tests. Run them and confirm they fail because the behaviour is missing:
+   an assertion, or the import of a module or name that does not exist yet. A failure caused
+   by a mistake in the test itself (typo, syntax error, wrong fixture) is not red; fix the
+   test first. Show the owner the failing output. A new test that passes immediately is a
+   defect in the test.
 3. **Commit the failing tests on their own**, with the prefix `test:`.
 4. **Green.** Write the smallest implementation that passes. Do not edit, weaken, skip or
    delete tests to get to green. Do not special-case test inputs. If a test seems wrong, stop
