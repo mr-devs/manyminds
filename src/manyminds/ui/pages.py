@@ -113,7 +113,7 @@ def _confirm_delete(on_confirm: Callable[[], None]) -> ui.dialog:
                 dialog.close()
                 on_confirm()
 
-            ui.button("Delete", on_click=confirmed).props("unelevated no-caps").classes(
+            ui.button("Delete", on_click=confirmed).props("flat no-caps").classes(
                 theme.BUTTON + " mm-danger"
             ).mark("confirm-delete")
     return dialog
@@ -230,7 +230,7 @@ def check_page(
                     for index, lead in enumerate(drafts):
                         _lead_row(services, lead, index, lead_editor.refresh, stale)
             ui.button("Add a lead", icon="add", on_click=add_lead).props("flat no-caps").classes(
-                "mm-add"
+                "mm-add" if drafts else "mm-add mm-add-alone"
             )
             if not drafts:
                 return

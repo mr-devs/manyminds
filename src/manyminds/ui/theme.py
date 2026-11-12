@@ -187,6 +187,7 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
     min-height: 44px; color: var(--mm-secondary) !important; font-size: 14px; font-weight: 500;
     text-transform: none; letter-spacing: 0;
 }
+.mm-add-alone.q-btn { margin-top: 28px; }
 .mm-add.q-btn:hover { color: var(--mm-ink) !important; border-color: var(--mm-ink); }
 .mm-launch {
     margin-top: 18px; align-items: center; justify-content: space-between; flex-wrap: nowrap;
@@ -200,7 +201,8 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
 }
 
 /* Threads: one card per lead being researched. */
-.mm-threads { gap: 10px; align-items: stretch; padding: 0; }
+.mm-threads { padding: 0; }
+.mm-threads > .mm-thread + .mm-thread { margin-top: 10px; }
 .mm-thread.q-item {
     padding: 16px 18px; min-height: 0; align-items: flex-start;
     border: 1px solid var(--mm-hairline); border-radius: 12px; background: var(--mm-paper);
@@ -266,7 +268,7 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
     border-top: 1px solid var(--mm-hairline);
 }
 .mm-transcript .q-scrollarea__content { width: 100%; padding: 0; }
-.mm-transcript-body { gap: 14px; padding: 26px 0 96px; align-items: stretch; width: 100%; }
+.mm-transcript-body { gap: 14px; padding: 26px 20px 96px 0; align-items: stretch; width: 100%; }
 .mm-step {
     font-size: 13px; line-height: 1.5; color: var(--mm-secondary); overflow-wrap: anywhere;
     display: flex; align-items: baseline; gap: 10px;
@@ -317,7 +319,7 @@ def sidebar(saved_checks: Callable[[], object]) -> None:
     with ui.left_drawer(bordered=False).props("width=264").classes("mm-sidebar"):
         ui.label("manyminds").classes("mm-wordmark")
         ui.button("New check", icon="add", on_click=lambda: ui.navigate.to("/")).props(
-            "unelevated no-caps"
+            "flat no-caps"
         ).classes("mm-new")
         ui.label("Checks").classes("mm-side-heading")
         saved_checks()
