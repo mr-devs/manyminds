@@ -23,7 +23,8 @@ Before leads are written (and before a chat reply, for links in the new message)
 2. **If a link will not open, look for it another way.** One further call may search and open
    up to three pages anywhere, and is told to find a mirror, an archive, an embed or coverage
    that reproduces the material. No mirror is named in the code. This call is given **only
-   the addresses** that failed, never what the user wrote. If it fails, leads are written
+   the addresses** that failed, never what the user wrote. Those addresses are the links
+   as the user wrote them, never an address a model reported trying. If it fails, leads are written
    without it.
 3. **Look at the images.** Image addresses in the user's text and on the opened pages (up to
    four; profile pictures and icons are skipped) are each sent to the model as an image, with
