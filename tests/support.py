@@ -6,7 +6,14 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from manyminds.core.models import EvidenceItem, JobEventKind, Report, SearchEngine, Stance
+from manyminds.core.models import (
+    EvidenceItem,
+    JobEventKind,
+    Report,
+    SearchEngine,
+    Stance,
+    Usage,
+)
 from manyminds.core.ports import Decomposition, Progress, ProgressCallback, ResearchResult
 
 
@@ -45,6 +52,8 @@ class RecordingModel:
     decompose_error: Exception | None = None
     failures: dict[str, Exception] = field(default_factory=dict)
     reports: dict[str, Report] = field(default_factory=dict)
+    usages: dict[str, Usage] = field(default_factory=dict)
+    """What particular leads consumed; other leads report no usage."""
     late_progress: dict[str, list[Progress]] = field(default_factory=dict)
     """Progress to report for a lead once it is released, before it finishes."""
     """Reports to return for particular leads, in place of the default one."""
@@ -114,7 +123,10 @@ class RecordingModel:
                 on_progress(progress)
             if lead in self.failures:
                 raise self.failures[lead]
-            return ResearchResult(report=self.reports.get(lead) or report_for(lead))
+            return ResearchResult(
+                report=self.reports.get(lead) or report_for(lead),
+                usage=self.usages.get(lead, Usage()),
+            )
         finally:
             self.active -= 1
 
