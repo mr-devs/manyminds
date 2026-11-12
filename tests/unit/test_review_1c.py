@@ -171,17 +171,21 @@ def test_interrupting_is_all_or_nothing(tmp_path: Path) -> None:
 async def test_an_interrupted_thread_can_be_tried_again_and_keeps_its_old_transcript(
     tmp_path: Path,
 ) -> None:
+    from manyminds.core.models import SearchEngine
+
+    # The app was closed with this job still queued: nothing ever ran it.
     first = open_store(tmp_path)
-    model = RecordingModel(leads=["Lead A"], hold=True)
-    running = services_on(first, model)
-    check = await running.checks.create_check("Some text.")
-    thread = running.checks.launch(check.id, models=["vendor/model-a"])[0]
-    first.interrupt_unfinished_jobs()
-    model.release_all()
-    await running.jobs.wait_until_idle()
+    check = first.create_check_with_leads(
+        title="T", source_text="Some text.", instructions="", leads=["Lead A"]
+    )
+    threads, _ = first.launch_leads(
+        check.id, models=["vendor/model-a"], search_engine=SearchEngine.EXA, instructions=""
+    )
+    thread = threads[0]
     first.close()
 
     second = open_store(tmp_path)
+    assert second.interrupt_unfinished_jobs() == 1
     again = services_on(second, RecordingModel(leads=["Lead A"]))
     assert again.checks.thread_status(thread.id) is ThreadStatus.FAILED
     again.checks.retry_thread(thread.id)
