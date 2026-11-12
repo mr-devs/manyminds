@@ -1,5 +1,6 @@
 """Domain models."""
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Annotated
 from urllib.parse import urlsplit
@@ -47,3 +48,113 @@ class Report(_Strict):
     summary: NonBlank
     evidence: list[EvidenceItem]
     undetermined: NonBlank
+
+
+class SearchEngine(StrEnum):
+    AUTO = "auto"
+    EXA = "exa"
+
+
+class LeadOrigin(StrEnum):
+    GENERATED = "generated"
+    MANUAL = "manual"
+    CONVERSATION = "conversation"
+
+
+class LeadState(StrEnum):
+    DRAFT = "draft"
+    LAUNCHED = "launched"
+
+
+class JobStatus(StrEnum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    DONE = "done"
+    FAILED = "failed"
+
+
+class ErrorKind(StrEnum):
+    AUTH = "auth"
+    CREDITS = "credits"
+    RATE_LIMIT = "rate_limit"
+    TIMEOUT = "timeout"
+    PROVIDER = "provider"
+    REFUSAL = "refusal"
+    INVALID_OUTPUT = "invalid_output"
+    INTERRUPTED = "interrupted"
+    CANCELLED = "cancelled"
+    UNKNOWN = "unknown"
+
+
+class JobEventKind(StrEnum):
+    STARTED = "started"
+    SEARCHING = "searching"
+    SOURCES_FOUND = "sources_found"
+    WRITING = "writing"
+    RETRYING = "retrying"
+    FINISHED = "finished"
+    FAILED = "failed"
+
+
+class _Record(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+
+class Check(_Record):
+    """One pasted text and everything that follows from it."""
+
+    id: str
+    title: str
+    source_text: str
+    instructions: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class Lead(_Record):
+    """A specific thread of research, editable until it is launched."""
+
+    id: str
+    check_id: str
+    text: str
+    position: int
+    origin: LeadOrigin
+    state: LeadState
+    created_at: datetime
+
+
+class Thread(_Record):
+    """A launched lead. Its status is derived from its jobs."""
+
+    id: str
+    check_id: str
+    lead_id: str
+    lead_text: str
+    created_at: datetime
+
+
+class Job(_Record):
+    """One model researching one thread."""
+
+    id: str
+    thread_id: str
+    model: str
+    status: JobStatus
+    search_engine: SearchEngine
+    instructions: str
+    attempt: int
+    error_kind: ErrorKind | None
+    error_message: str | None
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+class JobEvent(_Record):
+    """One line of live progress for a job."""
+
+    job_id: str
+    seq: int
+    kind: JobEventKind
+    detail: str
+    created_at: datetime
