@@ -8,7 +8,7 @@ import pytest
 from manyminds.core import storage
 from manyminds.core.checks import ChatBusyError, CheckService, NothingToLaunchError
 from manyminds.core.errors import ModelError
-from manyminds.core.events import ChatUpdated, EventBus, JobUpdated
+from manyminds.core.events import ChatUpdated, EventBus, Update
 from manyminds.core.jobs import JobManager
 from manyminds.core.models import (
     ErrorKind,
@@ -302,7 +302,7 @@ async def test_watchers_are_told_when_a_message_is_sent_and_when_the_reply_lands
     service: CheckService, bus: EventBus
 ) -> None:
     check = await service.create_check(TEXT)
-    seen: list[JobUpdated | ChatUpdated] = []
+    seen: list[Update] = []
     bus.subscribe(seen.append)
 
     await service.send(check.id, "Summarise.")
