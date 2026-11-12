@@ -45,10 +45,6 @@ strict = true
 addopts = ["-ra", "-p", "pytester", "-p", "pytest_strict_gate"]
 testpaths = ["tests"]
 pythonpath = ["scripts", "tests"]
-filterwarnings = [
-    # Raised inside the throwaway pytest sessions that the gate tests start.
-    "ignore:The configuration option \"asyncio_default_fixture_loop_scope\" is unset:pytest.PytestDeprecationWarning",
-]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = ["live: calls the real OpenRouter API; opt in with -m live and a real key"]

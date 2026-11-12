@@ -158,3 +158,12 @@ class JobEvent(_Record):
     kind: JobEventKind
     detail: str
     created_at: datetime
+
+
+class ThreadStatus(StrEnum):
+    """What a thread's row shows, derived from its jobs."""
+
+    QUEUED = "queued"
+    WORKING = "working"
+    FINISHED = "finished"
+    FAILED = "failed"
