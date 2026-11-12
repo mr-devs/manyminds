@@ -74,7 +74,7 @@ def report_input(
 def decompose_input(text: str, instructions: str, count: int, avoid: Sequence[str]) -> str:
     parts = [f"Give at most {count} leads.", _block("pasted_text", text)]
     if avoid:
-        listed = "\n".join(f"- {as_data(lead)}" for lead in avoid)
+        listed = _block("existing_leads", "\n".join(f"- {lead}" for lead in avoid))
         parts.append(f"Do not repeat or rephrase these leads, which are already listed:\n{listed}")
     return "\n\n".join(parts) + _owner_instructions(instructions)
 

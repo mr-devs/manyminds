@@ -18,6 +18,10 @@ Set it in your shell and start again:
 
 To look around without a key, run: manyminds --demo"""
 
+BAD_KEY = f"""\
+{KEY_VARIABLE} contains characters that cannot be part of a key, such as spaces,
+curly quotes or an ellipsis. Copy the key again and set it without quotes around it."""
+
 DISCLOSURE = (
     "Text you paste is sent to OpenRouter, to the model provider behind each model you "
     "choose, and to the Exa search engine. The app itself runs only on this computer."
@@ -111,6 +115,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     api_key = os.environ.get(KEY_VARIABLE, "").strip()
     if not api_key:
         print(NO_KEY, file=sys.stderr)
+        return 1
+    if not (api_key.isascii() and api_key.isprintable() and " " not in api_key):
+        print(BAD_KEY, file=sys.stderr)
         return 1
     _run_real(api_key, args.port, show=not args.no_browser)
     return 0

@@ -6,6 +6,10 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 _QUOTE_MARKS = str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})  # noqa: RUF001
 _SPACE = re.compile(r"\s+")
 
+PASSAGE_BREAK = "[...]"
+"""Divides separate passages of one page inside an excerpt. Exa uses the same marker."""
+MIN_QUOTE_LENGTH = 15
+
 
 def url_key(url: str) -> str:
     """A form of the URL for comparing two references to the same page.
@@ -30,8 +34,15 @@ def _flatten(text: str) -> str:
 
 
 def quote_in_excerpt(quote: str, excerpt: str) -> bool:
-    """Whether the quote appears in the excerpt, ignoring spacing, case and quote-mark style."""
-    return _flatten(quote) in _flatten(excerpt)
+    """Whether the quote appears in the excerpt, ignoring spacing, case and quote-mark style.
+
+    An excerpt may hold several separate passages divided by `[...]`; the quote must sit
+    inside one of them. A quote too short to identify a passage never counts as found.
+    """
+    wanted = _flatten(quote)
+    if len(wanted) < MIN_QUOTE_LENGTH:
+        return False
+    return any(wanted in _flatten(passage) for passage in excerpt.split(PASSAGE_BREAK))
 
 
 def as_data(text: str) -> str:

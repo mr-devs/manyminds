@@ -1,6 +1,7 @@
 """HTTP to OpenRouter: one streamed request, parsed into events, with failures named."""
 
 import json
+import math
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -70,48 +71,80 @@ class Transport:
 
     def _json_instead_of_stream(self, raw: bytes) -> ModelError:
         try:
-            error = json.loads(raw).get("error")
-        except (ValueError, AttributeError):
-            error = None
-        if not isinstance(error, dict):
+            found = _error_details(json.loads(raw))
+        except ValueError:
+            found = None
+        if found is None:
             return ModelError(ErrorKind.PROVIDER, "OpenRouter sent an unexpected reply.")
-        code = error.get("code")
-        return self._error(code if isinstance(code, int) else 500, str(error.get("message", "")))
+        return self._error(_status_for(found[0]), found[1])
 
-    def _error(self, status: int, upstream: str, retry_after: float | None = None) -> ModelError:
-        detail = self._redact(upstream)
+    def _error(
+        self,
+        status: int,
+        upstream: str,
+        retry_after: float | None = None,
+        *,
+        mid_reply: bool = False,
+    ) -> ModelError:
+        detail = self._redact(upstream) or "no details"
+        where = "part-way through the reply" if mid_reply else f"HTTP {status}"
         kind = _STATUS_KINDS.get(status)
         if kind is ErrorKind.AUTH:
             message = "OpenRouter rejected the API key."
         elif kind is ErrorKind.CREDITS:
             message = "The OpenRouter account does not have enough credits."
         elif kind is ErrorKind.REFUSAL:
-            message = f"OpenRouter blocked this request: {detail or 'no reason given'}"
+            message = f"OpenRouter blocked this request: {detail}"
         elif kind is ErrorKind.TIMEOUT:
             message = "The request to OpenRouter timed out."
         elif kind is ErrorKind.RATE_LIMIT:
             message = "OpenRouter is limiting requests right now."
         elif status >= 500:
             kind = ErrorKind.PROVIDER
-            message = f"The model provider failed (HTTP {status}): {detail or 'no details'}"
+            message = f"The model provider failed ({where}): {detail}"
         else:
             kind = ErrorKind.UNKNOWN
-            message = f"OpenRouter returned an error (HTTP {status}): {detail or 'no details'}"
+            message = f"OpenRouter returned an error ({where}): {detail}"
         return ModelError(kind, message, retry_after=retry_after)
 
     def _raise_if_error(self, event: dict[str, Any]) -> None:
         kind = event.get("type")
         if kind == "error":
-            detail = str(event.get("message", ""))
+            found = _error_details(event) or (event.get("code"), str(event.get("message") or ""))
         elif kind == "response.failed":
-            error = (event.get("response") or {}).get("error") or {}
-            detail = str(error.get("message", ""))
+            found = _error_details(event.get("response")) or (None, "")
         else:
             return
-        raise ModelError(
-            ErrorKind.PROVIDER,
-            f"The model provider failed part-way: {self._redact(detail) or 'no details'}",
-        )
+        raise self._error(_status_for(found[0]), found[1], mid_reply=True)
+
+
+_CODE_STATUS = {
+    "invalid_api_key": 401,
+    "insufficient_quota": 402,
+    "insufficient_credits": 402,
+    "rate_limit_exceeded": 429,
+}
+
+
+def _error_details(holder: object) -> tuple[object, str] | None:
+    """The (code, message) of the `error` entry inside a reply, whatever shape it has."""
+    if not isinstance(holder, dict) or holder.get("error") is None:
+        return None
+    error = holder["error"]
+    if isinstance(error, dict):
+        return error.get("code"), str(error.get("message") or "")
+    return None, str(error)
+
+
+def _status_for(code: object) -> int:
+    """An HTTP-style status for an error code that may be a number or a name."""
+    if isinstance(code, int) and not isinstance(code, bool):
+        return code
+    if isinstance(code, str):
+        if code.isdigit():
+            return int(code)
+        return _CODE_STATUS.get(code, 500)
+    return 500
 
 
 def _parse_line(line: str) -> dict[str, Any] | None:
@@ -138,6 +171,7 @@ def _upstream_message(raw: bytes) -> str:
 
 def _retry_after(response: httpx.Response) -> float | None:
     try:
-        return float(response.headers["retry-after"])
+        seconds = float(response.headers["retry-after"])
     except (KeyError, ValueError):
         return None
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None

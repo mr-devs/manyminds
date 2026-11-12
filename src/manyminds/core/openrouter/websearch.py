@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from manyminds.core.models import SearchEngine
+from manyminds.core.safety import PASSAGE_BREAK
 
 MAX_RESULTS_PER_SEARCH = 5
 MAX_SEARCHES = 6
@@ -46,50 +47,75 @@ def tool_entry(engine: SearchEngine) -> dict[str, Any]:
     }
 
 
-def search_from_item(item: dict[str, Any]) -> Search | None:
+def search_from_item(item: object) -> Search | None:
     """The search an output item describes, or None if the item is not a search."""
-    if item.get("type") not in _SEARCH_ITEM_TYPES:
+    if not isinstance(item, dict) or item.get("type") not in _SEARCH_ITEM_TYPES:
         return None
-    action = item.get("action") or {}
+    action = item.get("action")
+    if not isinstance(action, dict):
+        return Search("", ())
+    sources = action.get("sources")
     urls = tuple(
         source["url"]
-        for source in action.get("sources") or []
+        for source in (sources if isinstance(sources, list) else [])
         if isinstance(source, dict) and isinstance(source.get("url"), str)
     )
-    return Search(str(action.get("query") or ""), urls)
+    query = action.get("query")
+    return Search(query if isinstance(query, str) else "", urls)
+
+
+def _annotations(item: object) -> list[dict[str, Any]]:
+    if not isinstance(item, dict) or not isinstance(item.get("content"), list):
+        return []
+    return [
+        annotation
+        for part in item["content"]
+        if isinstance(part, dict) and isinstance(part.get("annotations"), list)
+        for annotation in part["annotations"]
+        if isinstance(annotation, dict)
+        and annotation.get("type") == "url_citation"
+        and isinstance(annotation.get("url"), str)
+    ]
+
+
+def _output(response: dict[str, Any]) -> list[object]:
+    output = response.get("output")
+    return output if isinstance(output, list) else []
 
 
 def citations(response: dict[str, Any]) -> list[Citation]:
     """Every page the search returned in this response, one entry per URL, in order."""
     found: dict[str, Citation] = {}
-    for item in response.get("output") or []:
+    for item in _output(response):
         search = search_from_item(item)
         if search is not None:
             for url in search.urls:
                 found.setdefault(url, Citation(url, None, None))
             continue
-        for part in item.get("content") or []:
-            for annotation in part.get("annotations") or []:
-                if annotation.get("type") != "url_citation":
-                    continue
-                url = annotation.get("url")
-                if not isinstance(url, str):
-                    continue
-                known = found.get(url)
-                excerpts = [
-                    text
-                    for text in (known.excerpt if known else None, annotation.get("content"))
-                    if isinstance(text, str) and text
-                ]
-                found[url] = Citation(
-                    url,
-                    annotation.get("title") or (known.title if known else None),
-                    "\n".join(excerpts) or None,
-                )
+        for annotation in _annotations(item):
+            url = annotation["url"]
+            known = found.get(url)
+            title = annotation.get("title")
+            found[url] = Citation(
+                url,
+                (title if isinstance(title, str) and title else None)
+                or (known.title if known else None),
+                join_excerpts(known.excerpt if known else None, annotation.get("content")),
+            )
     return list(found.values())
 
 
+def join_excerpts(*excerpts: object) -> str | None:
+    """Several excerpts of one page as one text, kept apart so no quote can span two."""
+    kept = [text for text in excerpts if isinstance(text, str) and text]
+    return f"\n{PASSAGE_BREAK}\n".join(kept) or None
+
+
 def search_count(response: dict[str, Any]) -> int:
-    details = (response.get("usage") or {}).get("server_tool_use_details") or {}
-    count = details.get("web_search_requests")
-    return count if isinstance(count, int) else 0
+    """Searches run in this response: the reported count, or else the search items seen."""
+    usage = response.get("usage")
+    details = usage.get("server_tool_use_details") if isinstance(usage, dict) else None
+    count = details.get("web_search_requests") if isinstance(details, dict) else None
+    if isinstance(count, int) and not isinstance(count, bool):
+        return count
+    return sum(1 for item in _output(response) if search_from_item(item) is not None)

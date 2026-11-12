@@ -27,6 +27,8 @@ def _evidence_item(item: EvidenceItem) -> None:
                 ui.label(urlsplit(item.url).hostname or "").classes("mm-host")
         if not item.grounded:
             ui.label("Not found in search results").classes("mm-flag")
+        elif item.quote_matched is False:
+            ui.label("Quote not found in the search result").classes("mm-flag")
 
 
 def report_view(report: Report) -> None:
