@@ -6,36 +6,70 @@ from collections.abc import Callable
 from nicegui import Event, ui
 from nicegui.events import ScrollEventArguments, ValueChangeEventArguments
 
-from manyminds.core.checks import CheckBusyError, NothingToLaunchError, TooManyLeadsError
+from manyminds.core.checks import (
+    ChatBusyError,
+    CheckBusyError,
+    NothingToLaunchError,
+    TooManyLeadsError,
+)
 from manyminds.core.errors import ModelError
-from manyminds.core.events import JobUpdated
-from manyminds.core.models import JobEvent, JobEventKind, Lead, ThreadStatus
+from manyminds.core.events import ChatUpdated, JobUpdated, Update
+from manyminds.core.models import (
+    JobEvent,
+    JobEventKind,
+    Lead,
+    LeadState,
+    Message,
+    MessageRole,
+    MessageStatus,
+    Thread,
+    ThreadStatus,
+)
 from manyminds.core.services import Services
 from manyminds.core.storage import NotFoundError
 from manyminds.ui import theme
 from manyminds.ui.follow import Follower
 from manyminds.ui.report_view import report_view, usage_line
 
-JobUpdates = Event[JobUpdated]
+Updates = Event[Update]
 
 logger = logging.getLogger(__name__)
 
+SEND_KEY = "keydown.enter.exact.prevent"
+"""Enter sends; Shift+Enter starts a new line."""
+
 
 def _follow(
-    updates: JobUpdates,
+    updates: Updates,
     anchor: ui.element,
-    wanted: Callable[[JobUpdated], bool],
-    react: Callable[[JobUpdated], object],
+    wanted: Callable[[Update], bool],
+    react: Callable[[Update], object],
 ) -> None:
-    """Call react whenever a matching job changes, for as long as anchor is on the page."""
+    """Call react whenever a matching update arrives, for as long as anchor is on the page."""
 
-    def on_update(event: JobUpdated) -> None:
+    def on_update(event: Update) -> None:
         if anchor.is_deleted:
             updates.unsubscribe(on_update)
         elif wanted(event):
             react(event)
 
     updates.subscribe(on_update)
+
+
+def _follow_scroll(follower: Follower, classes: str) -> ui.scroll_area:
+    """A scrolling area that stays at its end as content arrives, unless the user scrolls up."""
+
+    def on_scroll(event: ScrollEventArguments) -> None:
+        # Reported both when the user scrolls and when the content grows.
+        if follower.moved(
+            position=event.vertical_position,
+            size=event.vertical_size,
+            container=event.vertical_container_size,
+        ):
+            area.scroll_to(percent=1.0)
+
+    area = ui.scroll_area(on_scroll=on_scroll).classes(classes)
+    return area
 
 
 # -- home ---------------------------------------------------------------------------------
@@ -46,18 +80,14 @@ def home_page(services: Services, checks_changed: Callable[[], object]) -> None:
         ui.label("What would you like to check?").classes(theme.HEADLINE)
         with ui.column().classes("mm-composer"):
             composer = (
-                ui.textarea(placeholder="Paste a claim or a piece of text")
+                ui.textarea(
+                    placeholder="Paste a claim, a post or a link, and say what you want checked"
+                )
                 .props("borderless autogrow")
                 .classes("w-full mm-field")
                 .mark("composer")
             )
-            with ui.row().classes("mm-composer-foot items-center no-wrap gap-3"):
-                instructions = (
-                    ui.input(placeholder="Add instructions, such as leads to pursue (optional)")
-                    .props("borderless dense")
-                    .classes("grow mm-field mm-instructions")
-                    .mark("instructions")
-                )
+            with ui.row().classes("mm-composer-foot items-center justify-end no-wrap gap-3"):
                 spinner = ui.spinner(size="sm", color="grey-6")
                 spinner.set_visibility(False)
                 button = ui.button("Generate leads").props("unelevated no-caps")
@@ -71,16 +101,21 @@ def home_page(services: Services, checks_changed: Callable[[], object]) -> None:
             problem.set_text(message)
             problem.set_visibility(True)
 
+        busy = {"now": False}
+
         async def generate() -> None:
             text = composer.value or ""
+            if busy["now"]:
+                return
             if not text.strip():
                 show_problem("Paste some text first.")
                 return
             problem.set_visibility(False)
+            busy["now"] = True
             button.disable()
             spinner.set_visibility(True)
             try:
-                check = await services.checks.create_check(text, instructions.value or "")
+                check = await services.checks.create_check(text)
             except ModelError as error:
                 show_problem(error.message)
             except Exception as error:
@@ -90,20 +125,24 @@ def home_page(services: Services, checks_changed: Callable[[], object]) -> None:
                 checks_changed()
                 ui.navigate.to(f"/check/{check.id}")
             finally:
+                busy["now"] = False
                 button.enable()
                 spinner.set_visibility(False)
 
         button.on_click(generate)
+        composer.on(SEND_KEY, generate)
 
 
 # -- check --------------------------------------------------------------------------------
+
+LEADS_INTRO = "Leads worth researching. Start any of them, reword them, or leave them."
 
 
 def _confirm_delete(on_confirm: Callable[[], None]) -> ui.dialog:
     with ui.dialog() as dialog, ui.card().classes("mm-dialog"):
         ui.label("Delete this check and its research?").classes("mm-dialog-title")
         ui.label(
-            "The pasted text, its leads and every report under it are removed from this "
+            "The conversation, its leads and every report under it are removed from this "
             "computer. This cannot be undone."
         ).classes(theme.MUTED)
         with ui.row().classes("w-full justify-end gap-2 mt-3"):
@@ -120,10 +159,12 @@ def _confirm_delete(on_confirm: Callable[[], None]) -> ui.dialog:
 
 
 def check_page(
-    services: Services, updates: JobUpdates, check_id: str, checks_changed: Callable[[], object]
+    services: Services, updates: Updates, check_id: str, checks_changed: Callable[[], object]
 ) -> None:
+    """One check as a running conversation: what the user said, the replies, and under each
+    reply the leads it put forward, which are started one at a time."""
     store = services.store
-    with theme.content() as _, ui.column().classes("gap-0 items-stretch") as page:
+    with theme.content(tall=True) as _, ui.column().classes("mm-chat-page") as page:
         try:
             check = store.get_check(check_id)
         except NotFoundError:
@@ -147,135 +188,216 @@ def check_page(
 
         dialog = _confirm_delete(delete)
         with ui.row().classes("mm-head"):
-            ui.label(check.title).classes(theme.TITLE)
+            ui.label(check.title).classes("mm-chat-title")
             ui.button("Delete check", on_click=dialog.open).props("flat no-caps").classes(
                 theme.QUIET
             )
-        with ui.column().classes(theme.PANEL):
-            ui.label("Text being checked").classes(theme.LABEL)
-            ui.label(check.source_text).classes(theme.SOURCE)
-
-        status_labels: dict[str, ui.label] = {}
-
-        def update_status(event: JobUpdated) -> None:
-            label = status_labels.get(event.thread_id)
-            if label is None:
-                # A thread this page has not drawn yet: it was launched from another tab.
-                redraw()
-            else:
-                theme.set_status(label, services.checks.thread_status(event.thread_id))
-
-        @ui.refreshable
-        def threads() -> None:
-            # Rebuilt only when the list of threads changes; statuses are updated in place.
-            status_labels.clear()
-            rows = store.list_threads(check_id)
-            if not rows:
-                return
-            ui.label("Threads").classes(theme.SECTION)
-            ui.label("One for each lead being researched. Open one to follow its work.").classes(
-                "mm-section-note"
-            )
-            with ui.list().classes("mm-threads"):
-                for index, thread in enumerate(rows):
-                    target = f"/check/{check_id}/thread/{thread.id}"
-                    with (
-                        ui.item(on_click=lambda target=target: ui.navigate.to(target))
-                        .props("clickable")
-                        .classes("mm-thread")
-                        .mark(f"thread-row-{index}")
-                    ):
-                        with ui.item_section():
-                            ui.label(thread.lead_text).classes("mm-thread-text")
-                        with ui.item_section().props("side"):
-                            status_labels[thread.id] = theme.status_label(
-                                services.checks.thread_status(thread.id)
-                            )
-                        with ui.item_section().props("side"):
-                            started = theme.format_when(thread.created_at.astimezone())
-                            ui.label(started).classes(theme.MUTED)
 
         def tell(message: str) -> None:
             notice.set_text(message)
             notice.set_visibility(True)
 
-        def redraw() -> None:
-            lead_editor.refresh()
-            threads.refresh()
+        # Kept outside the parts of the page that are rebuilt.
+        chosen = {"model": services.research_models[0]}
+        status_labels: dict[str, ui.label] = {}
+        groups: dict[str, Callable[[], object]] = {}
+        """How to redraw the leads under each reply, by the reply's id."""
+        drawn: dict[str, tuple[ui.element, MessageStatus]] = {}
+        """Each message already on the page, and the state it was drawn in."""
+        follower = Follower()
+
+        def redraw_leads() -> None:
+            for refresh in list(groups.values()):
+                refresh()
 
         def stale() -> None:
             # Another tab changed these leads; show what is really there.
             tell("This list was out of date and has been refreshed.")
-            redraw()
+            redraw_leads()
 
-        # Kept outside the editor, which is rebuilt whenever a lead is added or removed.
-        chosen = {"model": services.research_models[0]}
+        def start(lead_ids: list[str]) -> None:
+            """Start research on the given leads with the chosen model."""
+            for lead_id in lead_ids:
+                try:
+                    services.checks.launch_lead(lead_id, [chosen["model"]])
+                except NothingToLaunchError:
+                    stale()
+                    return
+                except ValueError as error:
+                    tell(str(error))
+                    break
+                except Exception as error:
+                    logger.error("Starting a lead failed: %s", type(error).__name__)
+                    tell("Research could not be started. Nothing was changed.")
+                    break
+            else:
+                notice.set_visibility(False)
+            redraw_leads()
 
-        def add_lead() -> None:
-            try:
-                services.checks.add_lead(check_id)
-            except TooManyLeadsError as error:
-                tell(str(error))
-                return
-            except Exception as error:
-                logger.error("Adding a lead failed: %s", type(error).__name__)
-                tell("The lead could not be added. Nothing was changed.")
-                return
-            notice.set_visibility(False)
-            lead_editor.refresh()
+        def lead_group(message: Message, opening: bool) -> None:
+            """The leads listed under one reply. Rebuilt when one is added, removed or started."""
 
-        @ui.refreshable
-        def lead_editor() -> None:
-            drafts = store.list_draft_leads(check_id)
-            if drafts:
-                ui.label("Leads to research").classes(theme.SECTION)
-                ui.label("Edit any lead, remove it, or add your own before starting.").classes(
-                    "mm-section-note"
+            def add() -> None:
+                try:
+                    services.checks.add_lead(check_id, message.id)
+                except TooManyLeadsError as error:
+                    tell(str(error))
+                    return
+                except Exception as error:
+                    logger.error("Adding a lead failed: %s", type(error).__name__)
+                    tell("The lead could not be added. Nothing was changed.")
+                    return
+                notice.set_visibility(False)
+                group.refresh()
+
+            def start_all() -> None:
+                # Read afresh: the wording may have changed since the list was drawn.
+                start(
+                    [
+                        lead.id
+                        for lead in store.list_leads(check_id)
+                        if lead.message_id == message.id
+                        and lead.state is LeadState.DRAFT
+                        and lead.text
+                    ]
                 )
+
+            @ui.refreshable
+            def group() -> None:
+                every = store.list_leads(check_id)
+                threads = {thread.lead_id: thread for thread in store.list_threads(check_id)}
+                drafts = [lead for lead in every if lead.state is LeadState.DRAFT]
+                started = [lead for lead in every if lead.state is LeadState.LAUNCHED]
+                mine = [lead for lead in every if lead.message_id == message.id]
+                if not mine and not opening:
+                    return
+                if mine and not message.body:
+                    ui.label(LEADS_INTRO).classes("mm-say-note")
                 with ui.column().classes("mm-leads").mark("lead-list"):
-                    for index, lead in enumerate(drafts):
-                        _lead_row(services, lead, index, lead_editor.refresh, stale)
-            ui.button("Add a lead", icon="add", on_click=add_lead).props("flat no-caps").classes(
-                "mm-add" if drafts else "mm-add mm-add-alone"
+                    for lead in mine:
+                        thread = threads.get(lead.id)
+                        if thread is None:
+                            _lead_row(
+                                services, lead, drafts.index(lead), group.refresh, stale, start
+                            )
+                        else:
+                            status_labels[thread.id] = _started_row(
+                                services, thread, started.index(lead)
+                            )
+                waiting = [lead for lead in mine if lead.id not in threads]
+                with ui.row().classes("mm-group-foot"):
+                    ui.button("Add a lead", icon="add", on_click=add).props("flat no-caps").classes(
+                        "mm-add"
+                    )
+                    if len(waiting) > 1:
+                        ui.button("Research all", on_click=start_all).props("flat no-caps").classes(
+                            theme.QUIET
+                        ).mark("research-all")
+
+            groups[message.id] = group.refresh
+            group()
+
+        def draw(message: Message, opening: bool) -> None:
+            if message.role is MessageRole.USER:
+                ui.label(message.body).classes("mm-bubble").mark("user-message")
+            elif message.status is MessageStatus.PENDING:
+                with ui.row().classes("mm-pending"):
+                    ui.spinner(size="sm", color="grey-6")
+                    ui.label("Writing a reply").classes(theme.MUTED)
+            elif message.status is MessageStatus.FAILED:
+                reason = message.error_message or "unknown reason"
+                ui.label(f"No reply: {reason}").classes("mm-reply-error").mark("reply-error")
+            else:
+                if message.body:
+                    ui.label(message.body).classes("mm-say").mark("reply")
+                lead_group(message, opening)
+
+        area = _follow_scroll(follower, "mm-chat")
+        with area:
+            stream = ui.column().classes("mm-chat-body")
+
+        def sync() -> None:
+            """Add messages that are new, and redraw a reply whose state has changed."""
+            opening = True
+            for message in store.list_messages(check_id):
+                is_reply = message.role is MessageRole.ASSISTANT
+                known = drawn.get(message.id)
+                if known is None or known[1] is not message.status:
+                    slot: ui.element
+                    if known is None:
+                        with stream:
+                            slot = ui.column().classes(f"mm-turn mm-turn-{message.role.value}")
+                    else:
+                        slot = known[0]
+                        slot.clear()
+                    with slot:
+                        draw(message, opening and is_reply)
+                    drawn[message.id] = (slot, message.status)
+                if is_reply:
+                    opening = False
+            if follower.following:
+                area.scroll_to(percent=1.0)
+
+        notice = ui.label().classes(theme.NOTICE + " mm-chat-notice")
+        notice.set_visibility(False)
+
+        with ui.column().classes("mm-composer mm-chat-composer"):
+            composer = (
+                ui.textarea(placeholder="Ask about the research, or paste something else to check")
+                .props("borderless autogrow rows=1")
+                .classes("w-full mm-field")
+                .mark("composer")
             )
-            if not drafts:
-                return
-            with ui.row().classes("mm-launch"):
+            with ui.row().classes("mm-composer-foot items-center no-wrap gap-3"):
                 ui.label("Research with").classes("mm-launch-label")
-                picker = (
+                (
                     ui.select(
                         list(services.research_models),
                         value=chosen["model"],
                         on_change=lambda event: chosen.update(model=event.value),
                     )
-                    .props("outlined dense")
+                    .props("borderless dense")
                     .classes("mm-picker")
                     .mark("model-picker")
                 )
+                ui.space()
+                send_button = ui.button("Send").props("unelevated no-caps").classes(theme.BUTTON)
 
-                def go() -> None:
-                    try:
-                        services.checks.launch(check_id, [picker.value] if picker.value else [])
-                    except NothingToLaunchError:
-                        stale()
-                        return
-                    except ValueError as error:
-                        tell(str(error))
-                        return
-                    except Exception as error:
-                        logger.error("Launch failed: %s", type(error).__name__)
-                        tell("Research could not be started. Nothing was changed.")
-                        return
-                    notice.set_visibility(False)
-                    redraw()
+        async def send() -> None:
+            text = composer.value or ""
+            if not text.strip():
+                tell("Write a message first.")
+                return
+            notice.set_visibility(False)
+            composer.set_value("")
+            try:
+                await services.checks.send(check_id, text)
+            except ChatBusyError as error:
+                composer.set_value(text)
+                tell(str(error))
+            except NotFoundError:
+                tell("This check no longer exists.")
+            except Exception as error:
+                logger.error("Sending a message failed: %s", type(error).__name__)
+                composer.set_value(text)
+                tell("The message could not be sent. Nothing was changed.")
 
-                ui.button("Go", on_click=go).props("unelevated no-caps").classes(theme.BUTTON)
+        send_button.on_click(send)
+        composer.on(SEND_KEY, send)
 
-        lead_editor()
-        notice = ui.label().classes(theme.NOTICE)
-        notice.set_visibility(False)
-        threads()
-        _follow(updates, page, lambda event: event.check_id == check_id, update_status)
+        def on_update(event: Update) -> None:
+            if isinstance(event, ChatUpdated):
+                sync()
+                return
+            label = status_labels.get(event.thread_id)
+            if label is None or label.is_deleted:
+                # A thread this page has not drawn yet: it was started from another tab.
+                redraw_leads()
+            else:
+                theme.set_status(label, services.checks.thread_status(event.thread_id))
+
+        sync()
+        _follow(updates, page, lambda event: event.check_id == check_id, on_update)
 
 
 def _lead_row(
@@ -284,9 +406,12 @@ def _lead_row(
     index: int,
     refresh: Callable[[], object],
     stale: Callable[[], None],
+    start: Callable[[list[str]], None],
 ) -> None:
+    """A lead that has not been started: reword it, start it, remove it, or leave it."""
+
     def save(event: ValueChangeEventArguments[str]) -> None:
-        # An emptied box is saved as empty; the core refuses to launch it until it is refilled.
+        # An emptied box is saved as empty; the core refuses to start it until it is refilled.
         try:
             services.checks.update_lead(lead.id, event.value or "")
         except NotFoundError:
@@ -301,11 +426,16 @@ def _lead_row(
         refresh()
 
     with ui.row().classes("mm-lead").mark(f"lead-row-{index}"):
-        ui.label(str(index + 1)).classes("mm-lead-number")
         (
             ui.textarea(value=lead.text, on_change=save, placeholder="Write a lead to research")
             .props("borderless dense autogrow rows=1")
             .classes("grow mm-field")
+        )
+        (
+            ui.button("Go", on_click=lambda: start([lead.id]))
+            .props('flat no-caps aria-label="Research this lead"')
+            .classes("mm-go")
+            .mark("go")
         )
         (
             ui.button(icon="close", on_click=remove)
@@ -313,6 +443,24 @@ def _lead_row(
             .classes("mm-icon")
             .mark("remove-lead")
         )
+
+
+def _started_row(services: Services, thread: Thread, index: int) -> ui.label:
+    """A lead being researched: its status, and a way into its thread. Returns the status."""
+    target = f"/check/{thread.check_id}/thread/{thread.id}"
+    with (
+        ui.item(on_click=lambda: ui.navigate.to(target))
+        .props("clickable")
+        .classes("mm-thread")
+        .mark(f"thread-row-{index}")
+    ):
+        with ui.item_section():
+            ui.label(thread.lead_text).classes("mm-thread-text")
+        with ui.item_section().props("side"):
+            status = theme.status_label(services.checks.thread_status(thread.id))
+        with ui.item_section().props("side"):
+            ui.icon("chevron_right").classes("mm-chevron")
+    return status
 
 
 # -- thread -------------------------------------------------------------------------------
@@ -349,7 +497,7 @@ def _transcript_entry(event: JobEvent) -> None:
         ui.label(event.detail).classes("mm-passage-text").mark("transcript-text")
 
 
-def thread_page(services: Services, updates: JobUpdates, check_id: str, thread_id: str) -> None:
+def thread_page(services: Services, updates: Updates, check_id: str, thread_id: str) -> None:
     store = services.store
     with theme.content(tall=True) as _, ui.column().classes("mm-thread-page") as page:
         try:
@@ -385,16 +533,7 @@ def thread_page(services: Services, updates: JobUpdates, check_id: str, thread_i
         """Jobs whose report is already on the page."""
         follower = Follower()
 
-        def on_scroll(event: ScrollEventArguments) -> None:
-            # Reported both when the user scrolls and when the transcript grows.
-            if follower.moved(
-                position=event.vertical_position,
-                size=event.vertical_size,
-                container=event.vertical_container_size,
-            ):
-                area.scroll_to(percent=1.0)
-
-        area = ui.scroll_area(on_scroll=on_scroll).classes("mm-transcript")
+        area = _follow_scroll(follower, "mm-transcript")
         with area:
             transcript = ui.column().classes("mm-transcript-body")
 
@@ -420,4 +559,9 @@ def thread_page(services: Services, updates: JobUpdates, check_id: str, thread_i
                 area.scroll_to(percent=1.0)
 
         catch_up()
-        _follow(updates, page, lambda event: event.thread_id == thread_id, lambda _: catch_up())
+        _follow(
+            updates,
+            page,
+            lambda event: isinstance(event, JobUpdated) and event.thread_id == thread_id,
+            lambda _: catch_up(),
+        )

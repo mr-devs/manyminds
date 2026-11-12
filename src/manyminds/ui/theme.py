@@ -145,7 +145,6 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 16px 48px rgba(0, 0, 0, 0.09);
 }
 .mm-composer textarea { font-size: 17px; line-height: 1.5; min-height: 84px; }
-.mm-composer .mm-instructions input { font-size: 14px; }
 .mm-composer-foot { border-top: 1px solid var(--mm-hairline); padding-top: 8px; margin-top: 4px; }
 .mm-field .q-field__control::before, .mm-field .q-field__control::after { display: none; }
 .mm-field .q-field__native, .mm-field .q-field__input { color: var(--mm-ink); }
@@ -178,10 +177,6 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
 .mm-lead:hover { border-color: #cfcfd6; }
 .mm-lead:focus-within { border-color: var(--mm-ink); box-shadow: 0 0 0 3px rgba(29, 29, 31, 0.07); }
 .mm-lead textarea { font-size: 16px; line-height: 1.5; padding: 8px 0; }
-.mm-lead-number {
-    font-size: 13px; color: var(--mm-tertiary); min-width: 18px; padding-top: 11px;
-    font-variant-numeric: tabular-nums;
-}
 .mm-lead .mm-icon { margin-top: 6px; }
 .mm-add.q-btn {
     width: 100%; margin-top: 10px; border: 1px dashed #cfcfd6; border-radius: 12px;
@@ -200,6 +195,57 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
 .mm-picker .q-field__control {
     border-radius: 999px; padding: 0 16px; min-height: 40px; background: var(--mm-paper);
 }
+
+/* The check page: a conversation that scrolls, with the box to write in fixed beneath it. */
+.mm-chat-page { flex: 1 1 auto; min-height: 0; gap: 0; align-items: stretch; flex-wrap: nowrap; }
+.mm-chat-title {
+    font-size: 20px; line-height: 1.3; font-weight: 600; letter-spacing: -0.012em;
+    overflow-wrap: anywhere; padding-top: 4px;
+}
+.mm-chat {
+    flex: 1 1 auto; min-height: 0; width: 100%; margin-top: 18px;
+    border-top: 1px solid var(--mm-hairline);
+}
+.mm-chat .q-scrollarea__content { width: 100%; padding: 0; }
+.mm-chat-body { gap: 30px; padding: 30px 20px 36px 0; align-items: stretch; width: 100%; }
+.mm-turn { gap: 14px; align-items: stretch; width: 100%; }
+.mm-turn-user { align-items: flex-end; }
+/* What the user said sits to the right in a tinted shape; replies are plain, to the left. */
+.mm-bubble {
+    background: var(--mm-surface); border-radius: 20px 20px 6px 20px; padding: 14px 20px;
+    max-width: 84%; font-size: 16px; line-height: 1.55; color: var(--mm-ink);
+    white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.mm-say { font-size: 16px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mm-say-note { font-size: 14px; line-height: 1.5; color: var(--mm-secondary); }
+.mm-pending { align-items: center; gap: 10px; }
+.mm-reply-error { font-size: 14px; line-height: 1.5; color: var(--mm-failed); }
+.mm-go.q-btn {
+    background: var(--mm-ink) !important; color: var(--mm-paper) !important;
+    border-radius: 999px; padding: 0 16px; min-height: 30px; margin-top: 7px;
+    font-size: 13px; font-weight: 500; text-transform: none; letter-spacing: 0; flex: none;
+}
+.mm-go.q-btn:hover { background: #3a3a3c !important; }
+.mm-group-foot { align-items: center; gap: 10px; flex-wrap: nowrap; width: 100%; }
+.mm-group-foot .mm-add.q-btn { margin-top: 0; flex: 1 1 auto; width: auto; min-height: 38px; }
+.mm-chevron { color: var(--mm-tertiary); font-size: 20px; }
+.mm-leads .mm-thread.q-item { align-items: center; padding: 12px 10px 12px 16px; }
+.mm-leads .mm-thread .q-item__section--side { padding-top: 0; padding-left: 14px; }
+.mm-chat-notice { margin: 0 0 8px; }
+.mm-chat-composer {
+    margin: 10px 0 24px; border-radius: 20px; padding: 6px 10px 10px 20px; flex: none;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 28px rgba(0, 0, 0, 0.06);
+}
+.mm-chat-composer textarea { font-size: 16px; min-height: 0; max-height: 30vh; }
+.mm-chat-composer .mm-composer-foot { border-top: none; margin-top: 0; padding-top: 2px; }
+.mm-chat-composer .mm-picker { min-width: 0; flex: 0 1 auto; }
+.mm-chat-composer .mm-picker .q-field__control {
+    background: none; padding: 0; min-height: 32px; border-radius: 0;
+}
+.mm-chat-composer .mm-picker .q-field__native { font-size: 14px; color: var(--mm-ink); }
+.mm-chat-composer .mm-picker .q-field__control::before,
+.mm-chat-composer .mm-picker .q-field__control::after { display: none; }
+.mm-chat-composer .mm-button.q-btn { min-height: 36px; padding: 2px 20px; }
 
 /* Threads: one card per lead being researched. */
 .mm-threads { padding: 0; }

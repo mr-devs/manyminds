@@ -8,7 +8,7 @@ from nicegui import app as app
 from nicegui import ui as ui
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from manyminds.core.events import JobUpdated
+from manyminds.core.events import Update
 from manyminds.core.services import Services
 from manyminds.ui import pages, theme
 
@@ -27,7 +27,7 @@ def install_host_check(served: Any) -> None:
 
 def build_root(services: Services) -> Callable[[], None]:
     """Return the function NiceGUI calls to build the page for each browser tab."""
-    updates: Event[JobUpdated] = Event()
+    updates: Event[Update] = Event()
     services.bus.subscribe(updates.emit)
 
     def root() -> None:
