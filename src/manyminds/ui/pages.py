@@ -370,6 +370,8 @@ def check_page(
                 return
             notice.set_visibility(False)
             composer.set_value("")
+            # Sending brings the view back to the end, wherever it had been scrolled to.
+            follower.following = True
             try:
                 await services.checks.send(check_id, text)
             except ChatBusyError as error:
@@ -433,7 +435,7 @@ def _lead_row(
         )
         (
             ui.button("Go", on_click=lambda: start([lead.id]))
-            .props('flat no-caps aria-label="Research this lead"')
+            .props('flat no-caps text-color=white aria-label="Research this lead"')
             .classes("mm-go")
             .mark("go")
         )
