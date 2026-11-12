@@ -28,7 +28,10 @@ SEARCH_INSTRUCTIONS = (
     "ones (official records, original documents, direct statements, the original post or "
     "footage) over reports about them. Trace a claim to where it first appeared when you "
     "can. Note the date of each source, and say so when sources disagree or all repeat a "
-    "single origin. Then write notes on what the sources say: for each useful source give "
+    "single origin. When a page will not open, as social media posts often will not, find "
+    "the same material another way: a mirror or archive of the post, an embed, or coverage "
+    "that reproduces it. Follow a video or image to where it was first published and "
+    "report what that source says about it. Then write notes on what the sources say: for each useful source give "
     "its URL, its title, a short passage copied exactly from the search result or the page, "
     "and whether the passage supports or undermines the lead. Say what you could not find "
     "out. Do not give a verdict or a rating on whether the lead is true. " + _DATA_RULE
