@@ -361,7 +361,7 @@ update to this table.
 | # | Milestone | Release | Status |
 |---|---|---|---|
 | 0 | Repository and PyPI name | 0.0.1 | **done 2026-11-11** |
-| 1a | Walking skeleton on the fake model | | built and reviewed; pull request open, waiting on one approval (see notes under the milestone) |
+| 1a | Walking skeleton on the fake model | | **done 2026-11-11** |
 | 1b | Real research through OpenRouter | 0.1.0a1 | not started |
 | 2 | Full lead-list controls | | not started |
 | 3 | Home, check page, persistence across restarts | 0.1.0a2 | not started |
@@ -404,7 +404,9 @@ The smallest end-to-end path, with no key and no network.
 and remove some, press Go, and watch threads go from queued to working to finished at different
 speeds, with one scripted failure that leaves the rest untouched.
 
-**Outcome (2026-11-11).** Built on branch `m1a-walking-skeleton`; 192 tests pass offline.
+**Outcome (2026-11-11).** Merged; 241 tests pass offline. After the first review the
+interface was redesigned, each thread gained a full, followable agent transcript, and a second
+code review's ten findings were fixed.
 Checked by hand in a real browser: generate, edit, Go, six agents at once with four queued,
 live status changes, the scripted failure leaving the rest untouched, and a report opening
 with grouped evidence and links. No browser console errors.
