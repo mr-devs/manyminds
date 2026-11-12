@@ -24,12 +24,13 @@ curly quotes or an ellipsis. Copy the key again and set it without quotes around
 
 DISCLOSURE = (
     "Text you paste is sent to OpenRouter, to the model provider behind each model you "
-    "choose, and to the Exa search engine. The app itself runs only on this computer."
+    "choose, and to the Exa search engine. The app runs only on this computer, and your "
+    "checks are saved on this computer."
 )
 
 START_NOTICE = f"""\
 {DISCLOSURE}
-In this version nothing is saved: checks and reports are gone when you stop the app.
+They are kept in: {{folder}}
 Each lead costs roughly one to two US cents on your OpenRouter account.
 Press Ctrl+C to stop."""
 
@@ -71,20 +72,24 @@ def _run_demo(port: int | None, show: bool) -> None:
 
 def _run_real(api_key: str, port: int | None, show: bool) -> None:
     from manyminds.core.openrouter.client import build_client
+    from manyminds.core.paths import data_dir, open_store
     from manyminds.core.services import build_services
-    from manyminds.core.storage import Store
     from manyminds.ui import app
 
+    folder = data_dir()
+    store = open_store(folder)
+    # Nothing is running yet, so work still marked as under way was cut off last time.
+    store.interrupt_unfinished_jobs()
     # The HTTP client lives as long as the process, which ends when the server stops.
     model, _ = build_client(api_key)
     services = build_services(
-        store=Store(":memory:"),
+        store=store,
         model=model,
         research_models=RESEARCH_MODELS,
         decompose_model=DECOMPOSE_MODEL,
         notice=DISCLOSURE,
     )
-    print(START_NOTICE)
+    print(START_NOTICE.format(folder=folder))
     app.run(services, port=port, show=show)
 
 

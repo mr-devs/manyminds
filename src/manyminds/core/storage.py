@@ -191,6 +191,11 @@ class Store:
         rows = self._all("SELECT * FROM checks ORDER BY created_at DESC, rowid DESC")
         return [Check.model_validate(dict(row)) for row in rows]
 
+    def delete_check(self, check_id: str) -> None:
+        """Remove a check and everything under it: leads, threads, jobs, transcripts, reports."""
+        if not self._write("DELETE FROM checks WHERE id = ?", (check_id,)):
+            raise NotFoundError(f"check {check_id}")
+
     # -- leads ------------------------------------------------------------------------
 
     def add_lead(self, check_id: str, text: str, origin: LeadOrigin) -> Lead:
@@ -295,10 +300,16 @@ class Store:
     # -- jobs -------------------------------------------------------------------------
 
     def create_job(
-        self, thread_id: str, *, model: str, search_engine: SearchEngine, instructions: str
+        self,
+        thread_id: str,
+        *,
+        model: str,
+        search_engine: SearchEngine,
+        instructions: str,
+        attempt: int = 1,
     ) -> Job:
         with self._transaction() as db:
-            job_id = self._insert_job(db, thread_id, model, search_engine, instructions)
+            job_id = self._insert_job(db, thread_id, model, search_engine, instructions, attempt)
         return self.get_job(job_id)
 
     def _insert_job(
@@ -308,12 +319,13 @@ class Store:
         model: str,
         search_engine: SearchEngine,
         instructions: str,
+        attempt: int = 1,
     ) -> str:
         job_id = uuid.uuid4().hex
         db.execute(
             "INSERT INTO jobs "
             "(id, thread_id, model, status, search_engine, instructions, attempt, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 job_id,
                 thread_id,
@@ -321,6 +333,7 @@ class Store:
                 JobStatus.QUEUED,
                 search_engine,
                 instructions,
+                attempt,
                 self._stamp(),
             ),
         )
@@ -365,6 +378,33 @@ class Store:
             (JobStatus.FAILED, kind, message, self._stamp(), job_id, JobStatus.DONE),
         )
         return self.get_job(job_id)
+
+    def interrupt_unfinished_jobs(self) -> int:
+        """Mark every job that was waiting or running as stopped. Call once, at start-up.
+
+        Nothing is running when the app has only just started, so any such job was cut off
+        when the app last closed. It is left for the user to try again.
+        """
+        message = "Stopped because the app was closed."
+        with self._transaction() as db:
+            rows = db.execute(
+                "SELECT id FROM jobs WHERE status IN (?, ?)", (JobStatus.QUEUED, JobStatus.RUNNING)
+            ).fetchall()
+            db.execute(
+                "UPDATE jobs SET status = ?, error_kind = ?, error_message = ?, finished_at = ? "
+                "WHERE status IN (?, ?)",
+                (
+                    JobStatus.FAILED,
+                    ErrorKind.INTERRUPTED,
+                    message,
+                    self._stamp(),
+                    JobStatus.QUEUED,
+                    JobStatus.RUNNING,
+                ),
+            )
+        for row in rows:
+            self.add_job_event(row["id"], JobEventKind.FAILED, message)
+        return len(rows)
 
     def get_report(self, job_id: str) -> Report | None:
         rows = self._all("SELECT body FROM reports WHERE job_id = ?", (job_id,))

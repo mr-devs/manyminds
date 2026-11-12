@@ -29,10 +29,22 @@ REPORT_INSTRUCTIONS = (
 )
 
 DECOMPOSE_INSTRUCTIONS = (
-    "You read a piece of text and list the specific, checkable leads in it that are worth "
-    "researching, most important first. Each lead is one self-contained sentence that can be "
-    "understood without the original text. Also give a short title for the text. Do not judge "
-    "whether any lead is true. " + _DATA_RULE
+    "You help a careful reader decide what to verify in a piece of text. List the leads "
+    "worth researching, most important first, and give the text a short neutral title.\n\n"
+    "A good lead:\n"
+    "- is a checkable statement of fact (an event, figure, quotation, attribution, cause or "
+    "comparison), not an opinion, prediction or value judgement;\n"
+    "- makes one claim, so a sentence that asserts two things becomes two leads;\n"
+    "- can stand on its own: it names who, what, when and where, with no pronouns or "
+    "references back to the text;\n"
+    "- is faithful to the text: it keeps the original's strength, scope and figures, neither "
+    "sharpened nor softened;\n"
+    "- is worded neutrally, as the claim to examine and not as a conclusion.\n\n"
+    "Put first the claims the text's argument rests on and those that would matter most if "
+    "wrong, such as ones about health, safety, money, rights or a person's reputation. Where "
+    "a statistic, quotation, image or study carries the argument, add a lead on whether its "
+    "source says what the text says it does. Leave out trivia, common knowledge and claims "
+    "no source could settle. Do not judge whether any lead is true. " + _DATA_RULE
 )
 
 _PASSAGE_GAP = "\n[...]\n"
@@ -74,7 +86,10 @@ def report_input(
 
 
 def decompose_input(text: str, instructions: str, count: int, avoid: Sequence[str]) -> str:
-    parts = [f"Give at most {count} leads.", _block("pasted_text", text)]
+    parts = [
+        f"Give at most {count} leads. Fewer is better than padding the list.",
+        _block("pasted_text", text),
+    ]
     if avoid:
         listed = _block("existing_leads", "\n".join(f"- {lead}" for lead in avoid))
         parts.append(f"Do not repeat or rephrase these leads, which are already listed:\n{listed}")
