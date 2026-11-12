@@ -339,6 +339,14 @@ Steps marked **PAUSE** wait for you.
     environment.
 12. Update this plan and move to milestone 1.
 
+**Outcome (2026-11-11):** done. `manyminds 0.0.1` is on PyPI and `uvx manyminds` works. At
+your request the first upload was made from this machine with your `UV_PUBLISH_TOKEN`, not
+through the release workflow, so no pending publisher was needed. Still to do before the next
+release: add a trusted publisher to the now-existing project at
+https://pypi.org/manage/project/manyminds/settings/publishing/ (owner `mr-devs`, repository
+`manyminds`, workflow `release.yml`, environment `pypi`). Until then `release.yml` cannot
+publish, and the `v0.0.1` tag's workflow run was cancelled for that reason.
+
 **Done when:** the public repo exists, CI is green, and `uvx manyminds` prints
 `manyminds 0.0.1` and the pre-alpha notice from the real PyPI.
 
@@ -351,7 +359,7 @@ update to this table.
 
 | # | Milestone | Release | Status |
 |---|---|---|---|
-| 0 | Repository and PyPI name | 0.0.1 | in progress: repo public, CI green; waiting on the PyPI pending publisher before tagging `v0.0.1` |
+| 0 | Repository and PyPI name | 0.0.1 | **done 2026-11-11** |
 | 1a | Walking skeleton on the fake model | | not started |
 | 1b | Real research through OpenRouter | 0.1.0a1 | not started |
 | 2 | Full lead-list controls | | not started |
