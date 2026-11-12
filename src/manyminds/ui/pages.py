@@ -321,7 +321,7 @@ def thread_page(services: Services, updates: JobUpdates, check_id: str, thread_i
                             report_view(report)
                             used = usage_line(job.usage)
                             if used:
-                                ui.label(used).classes(theme.MUTED).mark("usage")
+                                ui.label(used).classes(theme.MUTED + " mm-usage").mark("usage")
             theme.set_status(status, services.checks.thread_status(thread_id))
             if follower.following:
                 area.scroll_to(percent=1.0)
