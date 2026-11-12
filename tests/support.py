@@ -93,6 +93,7 @@ class RecordingModel:
 
     decompose_calls: list[dict[str, Any]] = field(default_factory=list)
     converse_calls: list[dict[str, Any]] = field(default_factory=list)
+    converse_searches: list[SearchEngine] = field(default_factory=list)
     _reply_gate: asyncio.Event = field(default_factory=asyncio.Event)
     _decompose_gate: asyncio.Event = field(default_factory=asyncio.Event)
     research_calls: list[dict[str, Any]] = field(default_factory=list)
@@ -155,9 +156,11 @@ class RecordingModel:
         context: ChatContext,
         *,
         model: str,
+        search: SearchEngine = SearchEngine.EXA,
         on_progress: ProgressCallback | None = None,
     ) -> ChatReply:
         self.converse_calls.append({"message": message, "context": context, "model": model})
+        self.converse_searches.append(search)
         for step in self.steps:
             if on_progress is not None:
                 on_progress(step)

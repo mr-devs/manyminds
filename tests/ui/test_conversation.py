@@ -396,3 +396,23 @@ async def test_a_step_reported_while_the_page_is_open_is_added_without_redrawing
 
     await user.should_see("A later step")
     await user.should_see("Working out what to research")
+
+
+async def test_steps_for_a_later_reply_appear_while_it_is_being_written(
+    user: User, model: RecordingModel
+) -> None:
+    from manyminds.core.models import JobEventKind
+    from manyminds.core.ports import Progress
+
+    await new_check(user)
+    model.steps = [Progress(JobEventKind.SEARCHING, "who paid for the bridge")]
+    model.hold_reply = True
+
+    await say(user, "Who paid for it?")
+
+    await user.should_see("Searching: who paid for the bridge")
+    await user.should_see("Writing a reply")
+
+    model.release_reply()
+    await user.should_see(marker="reply", content="A reply")
+    await user.should_see("Steps taken")

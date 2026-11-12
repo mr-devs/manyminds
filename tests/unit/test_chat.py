@@ -518,3 +518,15 @@ async def test_research_is_given_what_was_read_marked_as_a_models_reading(
         "What the app read from the links in this text. Image descriptions were written by "
         "a model and may be wrong; they are not evidence.\n" + SEEN
     )
+
+
+async def test_the_conversation_searches_with_the_apps_search_engine(
+    service: CheckService, model: RecordingModel
+) -> None:
+    from manyminds.core.models import SearchEngine
+
+    check = await service.create_check(TEXT)
+
+    await service.send(check.id, "Who paid for it?")
+
+    assert model.converse_searches == [SearchEngine.AUTO]
