@@ -23,6 +23,16 @@ def test_the_instructions_ask_for_checkable_self_contained_single_claims() -> No
         assert principle in text, principle
 
 
+def test_requests_written_alongside_the_pasted_text_are_honoured() -> None:
+    """There is one box for the text and for what the user wants done with it."""
+    text = prompts.DECOMPOSE_INSTRUCTIONS
+    given = prompts.decompose_input("Check this. Focus on the figures.", "", 10, [])
+
+    assert "user_message" in text
+    assert "follow those requests" in text
+    assert "<user_message>\nCheck this. Focus on the figures.\n</user_message>" in given
+
+
 def test_fewer_leads_than_the_limit_is_allowed() -> None:
     given = prompts.decompose_input("Some text.", "", 10, [])
 
