@@ -91,8 +91,10 @@ class ErrorKind(StrEnum):
 
 class JobEventKind(StrEnum):
     STARTED = "started"
+    THINKING = "thinking"
     SEARCHING = "searching"
     SOURCES_FOUND = "sources_found"
+    MESSAGE = "message"
     WRITING = "writing"
     RETRYING = "retrying"
     FINISHED = "finished"
@@ -154,7 +156,7 @@ class Job(_Record):
 
 
 class JobEvent(_Record):
-    """One line of live progress for a job."""
+    """One entry in a job's transcript: a step, the model's thinking, or what it wrote."""
 
     job_id: str
     seq: int

@@ -3,14 +3,15 @@
 from collections.abc import Callable
 
 from nicegui import Event, ui
-from nicegui.events import ValueChangeEventArguments
+from nicegui.events import ScrollEventArguments, ValueChangeEventArguments
 
 from manyminds.core.errors import ModelError
 from manyminds.core.events import JobUpdated
-from manyminds.core.models import Job, JobEvent, JobEventKind, JobStatus, Lead
+from manyminds.core.models import JobEvent, JobEventKind, Lead
 from manyminds.core.services import Services
 from manyminds.core.storage import NotFoundError
 from manyminds.ui import theme
+from manyminds.ui.follow import is_at_end
 from manyminds.ui.report_view import report_view
 
 JobUpdates = Event[JobUpdated]
@@ -232,24 +233,40 @@ def _lead_row(
 
 # -- thread -------------------------------------------------------------------------------
 
-PROGRESS_TEXT = {
+STEP_TEXT = {
     JobEventKind.STARTED: "Started",
     JobEventKind.SEARCHING: "Searching: {detail}",
-    JobEventKind.SOURCES_FOUND: "Found {detail}",
     JobEventKind.WRITING: "Writing the report",
     JobEventKind.RETRYING: "Trying again: {detail}",
     JobEventKind.FINISHED: "Report ready",
     JobEventKind.FAILED: "Stopped: {detail}",
 }
+"""Entries shown as a single quiet line."""
+
+PASSAGE_HEADING = {
+    JobEventKind.THINKING: "Thinking",
+    JobEventKind.SOURCES_FOUND: "Sources found",
+    JobEventKind.MESSAGE: None,
+}
+"""Entries shown as a passage of the model's or the search tool's own text."""
 
 
-def _progress_line(event: JobEvent) -> str:
-    return PROGRESS_TEXT[event.kind].format(detail=event.detail)
+def _transcript_entry(event: JobEvent) -> None:
+    """Add one transcript entry. Text from a model or a web page is shown as plain text."""
+    if event.kind in STEP_TEXT:
+        text = STEP_TEXT[event.kind].format(detail=event.detail)
+        ui.label(text).classes("mm-step").mark("transcript-text")
+        return
+    with ui.column().classes(f"mm-passage mm-passage-{event.kind.value}"):
+        heading = PASSAGE_HEADING[event.kind]
+        if heading:
+            ui.label(heading).classes("mm-passage-heading")
+        ui.label(event.detail).classes("mm-passage-text").mark("transcript-text")
 
 
 def thread_page(services: Services, updates: JobUpdates, check_id: str, thread_id: str) -> None:
     store = services.store
-    with theme.content() as _, ui.column().classes("gap-0 items-stretch") as page:
+    with theme.content(tall=True) as _, ui.column().classes("mm-thread-page") as page:
         try:
             check = store.get_check(check_id)
             thread = store.get_thread(thread_id)
@@ -259,30 +276,45 @@ def thread_page(services: Services, updates: JobUpdates, check_id: str, thread_i
 
         ui.link(f"← {check.title}", f"/check/{check_id}").classes("mm-back")
         ui.label(thread.lead_text).classes(theme.TITLE)
-
-        @ui.refreshable
-        def body() -> None:
-            with ui.row().classes("items-center gap-3 mt-3"):
-                theme.status_label(services.checks.thread_status(thread_id))
-                for job in store.list_jobs(thread_id):
-                    ui.label(job.model).classes(theme.MUTED)
+        with ui.row().classes("items-center gap-3 mt-3"):
+            status = theme.status_label(services.checks.thread_status(thread_id))
             for job in store.list_jobs(thread_id):
-                _job_view(services, job)
+                ui.label(job.model).classes(theme.MUTED)
 
-        body()
-        _follow(updates, page, lambda event: event.thread_id == thread_id, lambda _: body.refresh())
+        shown: dict[str, int] = {}
+        """How many transcript entries of each job are already on the page."""
+        concluded: set[str] = set()
+        """Jobs whose report is already on the page."""
+        following = True
 
+        def on_scroll(event: ScrollEventArguments) -> None:
+            nonlocal following
+            following = is_at_end(
+                position=event.vertical_position,
+                size=event.vertical_size,
+                container=event.vertical_container_size,
+            )
 
-def _job_view(services: Services, job: Job) -> None:
-    store = services.store
-    report = store.get_report(job.id)
-    if report is not None:
-        report_view(report)
-        return
-    with ui.column().classes("mm-progress"):
-        for event in store.list_job_events(job.id):
-            ui.label(_progress_line(event)).classes(theme.MUTED)
-    if job.status is JobStatus.FAILED and job.error_message:
-        ui.label(job.error_message).classes(theme.ERROR)
-    elif job.status in (JobStatus.QUEUED, JobStatus.RUNNING):
-        ui.spinner(type="dots", size="md", color="grey-5").classes("mt-3")
+        area = ui.scroll_area(on_scroll=on_scroll).classes("mm-transcript")
+        with area:
+            transcript = ui.column().classes("mm-transcript-body")
+
+        def catch_up() -> None:
+            """Append whatever is new. Earlier entries are never rebuilt."""
+            with transcript:
+                for job in store.list_jobs(thread_id):
+                    events = store.list_job_events(job.id)
+                    for event in events[shown.get(job.id, 0) :]:
+                        _transcript_entry(event)
+                    shown[job.id] = len(events)
+                    report = store.get_report(job.id)
+                    if report is not None and job.id not in concluded:
+                        concluded.add(job.id)
+                        with ui.column().classes("mm-report"):
+                            report_view(report)
+            theme.set_status(status, services.checks.thread_status(thread_id))
+            if following:
+                area.scroll_to(percent=1.0)
+
+        catch_up()
+        _follow(updates, page, lambda event: event.thread_id == thread_id, lambda _: catch_up())

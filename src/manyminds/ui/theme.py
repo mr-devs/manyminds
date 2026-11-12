@@ -163,7 +163,36 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
 .mm-evidence { padding: 18px 0; gap: 8px; align-items: stretch; }
 .mm-quote { font-size: 17px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .mm-flag { font-size: 12px; color: var(--mm-notice); }
-.mm-progress { gap: 4px; margin-top: 20px; }
+
+/* Thread page: a fixed heading with the transcript scrolling beneath it. */
+.mm-tall { height: 100vh; padding-top: 56px; padding-bottom: 0; flex-wrap: nowrap; }
+.mm-thread-page {
+    flex: 1 1 auto; min-height: 0; gap: 0; align-items: stretch; flex-wrap: nowrap;
+}
+.mm-transcript {
+    flex: 1 1 auto; min-height: 0; width: 100%; margin-top: 22px;
+    border-top: 1px solid var(--mm-hairline);
+}
+.mm-transcript .q-scrollarea__content { width: 100%; padding: 0; }
+.mm-transcript-body { gap: 14px; padding: 26px 0 96px; align-items: stretch; width: 100%; }
+.mm-step {
+    font-size: 13px; line-height: 1.5; color: var(--mm-secondary); overflow-wrap: anywhere;
+}
+.mm-passage { gap: 4px; align-items: stretch; }
+.mm-passage-heading { font-size: 12px; font-weight: 500; color: var(--mm-tertiary); }
+.mm-passage-text {
+    font-size: 15px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.mm-passage-thinking .mm-passage-text, .mm-passage-sources_found .mm-passage-text {
+    color: var(--mm-secondary);
+}
+.mm-passage-thinking, .mm-passage-sources_found {
+    border-left: 2px solid var(--mm-hairline); padding-left: 14px;
+}
+.mm-report {
+    gap: 0; align-items: stretch; border-top: 1px solid var(--mm-hairline); margin-top: 18px;
+}
+.mm-report .mm-section:first-child { margin-top: 30px; }
 
 :focus-visible { outline: 2px solid var(--mm-ink); outline-offset: 2px; border-radius: 4px; }
 .q-field :focus-visible { outline: none; }
@@ -183,9 +212,13 @@ def sidebar() -> None:
 
 
 @contextmanager
-def content(*, home: bool = False) -> Iterator[None]:
-    """The single centred column every page puts its content in."""
-    with ui.column().classes("mm-column" + (" mm-home" if home else "")):
+def content(*, home: bool = False, tall: bool = False) -> Iterator[None]:
+    """The single centred column every page puts its content in.
+
+    A tall column fills the window exactly, for a page with its own scrolling area.
+    """
+    extra = (" mm-home" if home else "") + (" mm-tall" if tall else "")
+    with ui.column().classes("mm-column" + extra):
         yield
 
 
