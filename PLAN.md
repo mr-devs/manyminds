@@ -134,8 +134,10 @@ validated `Report` (each item already flagged against the search tool's citation
 
 ### 2.4 How research output is kept honest
 
-1. The model gets one tool, `openrouter:web_search`, and nothing else. No fetch tool, no file
-   access, no shell. A test asserts the request's `tools` array has exactly that one entry.
+1. Research agents get two tools, `openrouter:web_search` and `openrouter:web_fetch`
+   (decision 17, replacing the earlier search-only rule at the owner's request). Links in
+   pasted text are opened with the fetch tool before leads are written, held to the sites the
+   text itself links to. Calls that write structured output get no tools.
 2. Output is validated against our `Report` schema regardless of what the provider promised.
    One repair attempt (a no-tools re-ask that includes the validation errors) is allowed; after
    that the job fails with `invalid_output`.
@@ -602,7 +604,7 @@ recovers by itself.
 - The check page input starts a conversation; it appears under **Conversations** and persists.
 - The context sent to the model contains the original text and all finished reports, and
   excludes failed and unfinished ones.
-- The request has exactly one tool, the same search tool, using the same engine setting.
+- The request has the same search and fetch tools as research, using the same engine setting.
 - Replies are structured; the UI shows "From the reports" and "From a new search" as separate
   labelled sections.
 - A new finding without a URL or quote is rejected (one repair attempt, then the reply is

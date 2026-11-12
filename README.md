@@ -36,9 +36,15 @@ text, leads and reports from that file.
 Your API key is read from the `OPENROUTER_API_KEY` environment variable. It is never written to
 disk, logged or printed. Storing it in the operating system's keychain is planned.
 
-Research agents read web pages, which can contain text written to mislead a model. They are
-given a search tool and nothing else, and their output is checked against a fixed format, but
-no defence here is complete: read the sources yourself.
+If the text you paste contains links, the app opens them (through OpenRouter and Exa, not from
+your computer) so that leads can be drawn from what they say. For a YouTube link that is the
+video's title and transcript.
+
+Research agents search the web and open pages, which can contain text written to mislead a
+model. What they read is treated as material to examine and their output is checked against a
+fixed format, but no defence here is complete: a page could in principle steer an agent into
+opening an address that carries part of your text with it. Read the sources yourself, and do
+not paste anything you would not want sent to these services.
 
 ## Run
 
