@@ -33,6 +33,9 @@ class JobManager:
     async def wait_until_idle(self) -> None:
         while self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
+            # Waiting on tasks that have already finished does not hand control back to the
+            # event loop, and they are only forgotten once it runs their callbacks.
+            await asyncio.sleep(0)
 
     async def _run(self, job_id: str) -> None:
         job = self._store.get_job(job_id)
