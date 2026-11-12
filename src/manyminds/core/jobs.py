@@ -64,7 +64,7 @@ class JobManager:
             try:
                 result = await self._model.research(
                     thread.lead_text,
-                    check.source_text,
+                    self._store.source_for_lead(thread.lead_id),
                     job.instructions,
                     model=job.model,
                     search=job.search_engine,

@@ -517,6 +517,21 @@ class Store:
         rows = self._all("SELECT * FROM messages WHERE check_id = ? ORDER BY seq", (check_id,))
         return [Message.model_validate(dict(row)) for row in rows]
 
+    def source_for_lead(self, lead_id: str) -> str:
+        """What the user had said when a lead was put forward: every message of theirs up to
+        the reply the lead is listed under. For a lead under the opening reply, and for one
+        under no reply, that is the text the check began with."""
+        lead = self.get_lead(lead_id)
+        rows = self._all(
+            "SELECT said.body FROM messages AS said JOIN messages AS reply "
+            "ON reply.check_id = said.check_id AND said.seq < reply.seq "
+            "WHERE reply.id = ? AND said.role = ? ORDER BY said.seq",
+            (lead.message_id, MessageRole.USER),
+        )
+        if not rows:
+            return self.get_check(lead.check_id).source_text
+        return "\n\n".join(row["body"] for row in rows)
+
     def begin_turn(self, check_id: str, body: str) -> Message:
         """Save what the user said and a reply that is still to come. Returns that reply."""
         with self._transaction() as db:

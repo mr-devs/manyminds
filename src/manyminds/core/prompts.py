@@ -148,7 +148,9 @@ def read_input(text: str) -> str:
     return _block("shared_text", text)
 
 
-def _linked_pages(pages: Sequence[tuple[str, str | None, str | None]]) -> str:
+def _linked_pages(
+    pages: Sequence[tuple[str, str | None, str | None]], where: str = "the text"
+) -> str:
     """Blocks for the pages behind the links: (url, title, content), content None if unread."""
     blocks = []
     for url, title, content in pages[:MAX_LINKED_PAGES]:
@@ -159,7 +161,7 @@ def _linked_pages(pages: Sequence[tuple[str, str | None, str | None]]) -> str:
             else "This link could not be opened."
         )
         blocks.append(f"{head}\n{body}\n</linked_page>")
-    return "What the links in the text lead to:\n" + "\n".join(blocks)
+    return f"What the links in {where} lead to:\n" + "\n".join(blocks)
 
 
 def decompose_input(
@@ -212,7 +214,7 @@ def chat_input(
             listed.append(f'<lead state="{_attribute(state)}">\n{as_data(text)}{inner}\n</lead>')
         parts.append("The leads, and what research on them has found:\n" + "\n".join(listed))
     if pages:
-        parts.append(_linked_pages(pages).replace("the text lead to", "the new message lead to"))
+        parts.append(_linked_pages(pages, "the new message"))
     parts.append(f"The user's new message:\n{_block('user_message', message)}")
     return "\n\n".join(parts)
 

@@ -108,6 +108,8 @@ class CheckService:
         self._bus = bus
         self._decompose_model = decompose_model
         self._chat_model = chat_model
+        self._replying: set[str] = set()
+        """Checks with a reply being written right now."""
         self._search_engine = search_engine
 
     async def create_check(self, text: str, instructions: str = "") -> Check:
@@ -132,6 +134,8 @@ class CheckService:
         because a running job cannot be stopped and would go on being paid for."""
         if self.store.count_unfinished_jobs(check_id):
             raise CheckBusyError("Research is still running. Wait for it to finish, then delete.")
+        if check_id in self._replying:
+            raise CheckBusyError("A reply is still being written. Wait for it, then delete.")
         self.store.delete_check(check_id)
 
     def add_lead(self, check_id: str, message_id: str | None = None) -> Lead:
@@ -210,23 +214,42 @@ class CheckService:
         body = text.strip()
         if not body:
             raise ValueError("Write a message first.")
-        earlier = self.store.list_messages(check_id)
-        if any(message.status is MessageStatus.PENDING for message in earlier):
+        self.store.get_check(check_id)
+        if check_id in self._replying:
             raise ChatBusyError("Wait for the reply before sending another message.")
-        context = self._chat_context(check_id, earlier)
+        context = self._chat_context(check_id, self.store.list_messages(check_id))
         reply = self.store.begin_turn(check_id, body)
-        self._bus.publish(ChatUpdated(check_id=check_id))
+        self._replying.add(check_id)
         try:
-            done = await self._reply(check_id, reply.id, body, context)
+            self._bus.publish(ChatUpdated(check_id=check_id))
+            return await self._settle(check_id, reply, body, context)
+        finally:
+            # Whatever happened, the conversation is free again and watchers are told.
+            self._replying.discard(check_id)
+            self._bus.publish(ChatUpdated(check_id=check_id))
+
+    async def _settle(
+        self, check_id: str, reply: Message, body: str, context: ChatContext
+    ) -> Message:
+        """Get the reply and save it, or save why there is none."""
+        try:
+            return await self._reply(check_id, reply.id, body, context)
         except ModelError as error:
-            done = self.store.fail_message(reply.id, error.message)
+            reason = error.message
         except Exception as error:
             # The text of an unexpected error may contain anything, so only its type is kept.
             name = type(error).__name__
             logger.error("A reply on check %s failed unexpectedly: %s", check_id, name)
-            done = self.store.fail_message(reply.id, f"Unexpected error ({name})")
-        self._bus.publish(ChatUpdated(check_id=check_id))
-        return done
+            reason = f"Unexpected error ({name})"
+        try:
+            return self.store.fail_message(reply.id, reason)
+        except Exception as error:
+            logger.error(
+                "A failed reply on check %s could not be recorded: %s",
+                check_id,
+                type(error).__name__,
+            )
+            return reply
 
     async def _reply(
         self, check_id: str, reply_id: str, body: str, context: ChatContext
