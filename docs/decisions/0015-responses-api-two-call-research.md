@@ -1,6 +1,6 @@
 # 15. Responses API, and research as two calls
 
-- Status: Proposed (awaiting the owner's answer on the default search engine)
+- Status: Accepted
 - Date: 2026-11-12
 
 ## Context
@@ -54,7 +54,8 @@ raw stream is plain `data:` lines of JSON with about ten event types we care abo
    no-tools formatting call with the strict report schema. Grounding flags are computed from
    the first call's annotations. The single-request path is not used, even where it works.
 3. Stay on **plain `httpx`** (decision 3 stands).
-4. **Proposed, needs the owner:** default the search engine to `exa`, not `auto`. See below.
+4. **The search engine defaults to `exa`**, not `auto` (owner's decision, 2026-11-12). `auto`
+   stays available as a setting.
 
 ## Consequences
 
@@ -65,5 +66,5 @@ raw stream is plain `data:` lines of JSON with about ten event types we care abo
   every model emits reasoning summaries.
 - Citation URLs are compared after stripping tracking parameters such as `utm_source`.
 - With `auto`, models with native search would produce evidence that cannot be quote-checked,
-  and Google models would show redirect links. That is why item 4 proposes `exa` as the default,
-  which contradicts the brief's "auto by default".
+  and Google models would show redirect links. That is why `exa` is the default, replacing the
+  brief's "auto by default". The disclosure text names Exa as the search provider.

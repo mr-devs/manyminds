@@ -24,7 +24,7 @@ correction.
 | 7 | **pytest has no built-in way to fail on skipped tests.** `strict_xfail` only fails unexpected passes. | A small `conftest.py` gate fails the run on any skip or xfail whose reason does not start with `JUSTIFIED:`. The gate has its own tests. |
 | 8 | **OpenRouter's docs are now Responses-API-first** (`POST /api/v1/responses`). Chat Completions is still documented. Citation shape, structured-output shape and usage keys differ between the two. | **Spike done: Responses API.** Its stream shows each search query and reasoning summaries; a Chat Completions stream shows neither. See decision 15. |
 | 9 | **Whether structured output can be combined with the web search server tool in one request is not documented.** | **Spike done: it is not reliable** (the schema was silently ignored on three of five model and engine combinations). Research is always two calls. See decision 15. |
-| 10 | **`engine: auto` is not uniform.** It uses the provider's native search for OpenAI, Anthropic, Google, xAI and Perplexity models and Exa for everything else. Native search ignores `max_results` and costs more ($10 to $14 per 1,000 searches against $7 for Exa). | Keep `auto` as the default as the brief requires, and say plainly in the settings text what each option does. |
+| 10 | **`engine: auto` is not uniform.** It uses the provider's native search for OpenAI, Anthropic, Google, xAI and Perplexity models and Exa for everything else. Native search ignores `max_results` and costs more ($10 to $14 per 1,000 searches against $7 for Exa). | **Changed after the spike: the default is `exa`** (owner's decision, 2026-11-12), because native search returns no excerpts to check quotes against. `auto` stays as an option, and the settings text says plainly what each does. See decision 15. |
 | 11 | **Structured-output support is per provider endpoint, not per model**, and providers may silently ignore the parameter. | Always send `provider: {require_parameters: true}` with a schema. Models without `structured_outputs` use a prompted-JSON path. Everything is validated by our own schema either way. |
 | 12 | **OpenRouter returns some errors with HTTP 200**, both streaming and non-streaming, and a model refusal arrives as a successful response with `finish_reason: "content_filter"`. | The adapter inspects the body, never the status code alone. These cases are in the fixture set from the start. |
 | 13 | **The official `openrouter` Python SDK is auto-generated and has had 458 releases in a year** (six on the day I checked). NiceGUI 4 also no longer installs `httpx`. | Use plain `httpx` as a direct dependency and write the small amount of HTTP and SSE handling ourselves. Reconsidered at your request; reasoning in [section 7](#7-dependencies). |
@@ -272,7 +272,7 @@ are stored as `Lead` rows with `origin = conversation` and `state = draft`.
 | `decompose_model` | `openai/gpt-6-luna` | Fast and cheap; every endpoint supports structured output. Checked against the live catalogue at startup. |
 | `research_models` | last used | List of model ids. |
 | `conversation_model` | last used | |
-| `search_engine` | `auto` | `auto` or `exa`. |
+| `search_engine` | `exa` | `auto` or `exa`. |
 | `max_concurrent_jobs` | 6 | |
 | `job_timeout_seconds` | 300 | |
 | `disclosure_acknowledged_at` | null | Set during first-run onboarding. |
