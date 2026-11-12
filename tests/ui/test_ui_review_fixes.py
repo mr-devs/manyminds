@@ -109,6 +109,7 @@ async def test_removing_a_lead_already_removed_elsewhere_refreshes_the_list(
         user.find(marker="remove-lead").click()
 
     await user.should_see(OUT_OF_DATE)
+    await user.should_not_see("Lead B")
     assert lead_boxes(user) == ["Lead A", "Lead C"]
 
 
