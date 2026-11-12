@@ -43,7 +43,7 @@ required-version = ">=0.13.7,<0.14"
 
 [tool.pytest]
 strict = true
-addopts = ["-ra", "-p", "pytester", "-p", "pytest_strict_gate", "-p", "pytest_network_block"]
+addopts = ["-ra", "-p", "pytester", "-p", "pytest_strict_gate", "-p", "pytest_network_block", "-m", "not live"]
 testpaths = ["tests"]
 pythonpath = ["scripts", "tests"]
 asyncio_mode = "auto"
