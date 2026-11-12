@@ -17,7 +17,15 @@ from manyminds.core.models import (
     SearchEngine,
     Stance,
 )
-from manyminds.core.ports import Decomposition, Progress, ProgressCallback, ResearchResult
+from manyminds.core.ports import (
+    FINISHED,
+    ChatContext,
+    ChatReply,
+    Decomposition,
+    Progress,
+    ProgressCallback,
+    ResearchResult,
+)
 
 LEADS: Sequence[str] = (
     "Who first made this claim, and in what context?",
@@ -85,6 +93,20 @@ class FakeModelClient:
     ) -> Decomposition:
         fresh = [lead for lead in LEADS if lead not in set(avoid)]
         return Decomposition(title=_title(text), leads=fresh[:count])
+
+    async def converse(self, message: str, context: ChatContext, *, model: str) -> ChatReply:
+        await self._sleep(0.8)
+        finished = [note for note in context.leads if note.state == FINISHED]
+        lines = [
+            "Demo reply. A real model would answer your message here, drawing on the "
+            "finished research.",
+            f"{len(finished)} of {len(context.leads)} leads have a finished report.",
+        ]
+        lines += [f"- {note.text}: {note.reports[0].summary}" for note in finished if note.reports]
+        known = {note.text for note in context.leads}
+        wants_leads = "lead" in message.casefold()
+        fresh = [lead for lead in LEADS if lead not in known][:3] if wants_leads else []
+        return ChatReply(body="\n".join(lines), leads=fresh)
 
     async def research(
         self,

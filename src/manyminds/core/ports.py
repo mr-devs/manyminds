@@ -4,7 +4,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from manyminds.core.models import JobEventKind, Report, SearchEngine, Usage
+from manyminds.core.models import JobEventKind, MessageRole, Report, SearchEngine, Usage
 
 
 @dataclass(frozen=True)
@@ -32,12 +32,52 @@ class ResearchResult:
     usage: Usage = field(default_factory=Usage)
 
 
+@dataclass(frozen=True)
+class PastTurn:
+    """Something already said in the conversation."""
+
+    role: MessageRole
+    body: str
+
+
+NOT_STARTED = "not started"
+IN_PROGRESS = "in progress"
+FINISHED = "finished"
+FAILED = "failed"
+
+
+@dataclass(frozen=True)
+class LeadNote:
+    """A lead on the check, how far its research has got, and any finished reports."""
+
+    text: str
+    state: str
+    reports: tuple[Report, ...] = ()
+
+
+@dataclass(frozen=True)
+class ChatContext:
+    """What the chat model is shown besides the new message."""
+
+    turns: tuple[PastTurn, ...]
+    leads: tuple[LeadNote, ...]
+
+
+@dataclass(frozen=True)
+class ChatReply:
+    body: str
+    leads: list[str] = field(default_factory=list)
+    """Leads proposed for research. They wait for the user; nothing starts by itself."""
+
+
 class ModelClient(Protocol):
     """Everything the app asks of a language model. Failures raise ModelError."""
 
     async def decompose(
         self, text: str, instructions: str, *, count: int, avoid: Sequence[str], model: str
     ) -> Decomposition: ...
+
+    async def converse(self, message: str, context: ChatContext, *, model: str) -> ChatReply: ...
 
     async def research(
         self,

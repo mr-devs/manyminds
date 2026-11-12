@@ -16,7 +16,15 @@ class JobUpdated:
     job_id: str
 
 
-Listener = Callable[[JobUpdated], None]
+@dataclass(frozen=True)
+class ChatUpdated:
+    """A message was added to a check's conversation, or a reply landed. Already saved."""
+
+    check_id: str
+
+
+Update = JobUpdated | ChatUpdated
+Listener = Callable[[Update], None]
 
 
 class EventBus:
@@ -33,7 +41,7 @@ class EventBus:
 
         return unsubscribe
 
-    def publish(self, event: JobUpdated) -> None:
+    def publish(self, event: Update) -> None:
         for listener in list(self._listeners):
             try:
                 listener(event)

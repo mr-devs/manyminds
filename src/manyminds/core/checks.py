@@ -1,8 +1,10 @@
 """Use cases for a check: generate leads, edit them, launch research."""
 
+import logging
 from collections.abc import Sequence
 
 from manyminds.core.errors import ModelError
+from manyminds.core.events import ChatUpdated, EventBus
 from manyminds.core.jobs import JobManager
 from manyminds.core.models import (
     Check,
@@ -11,12 +13,27 @@ from manyminds.core.models import (
     JobStatus,
     Lead,
     LeadOrigin,
+    LeadState,
+    Message,
+    MessageRole,
+    MessageStatus,
     SearchEngine,
     Thread,
     ThreadStatus,
 )
-from manyminds.core.ports import ModelClient
-from manyminds.core.storage import Store
+from manyminds.core.ports import (
+    FAILED,
+    FINISHED,
+    IN_PROGRESS,
+    NOT_STARTED,
+    ChatContext,
+    LeadNote,
+    ModelClient,
+    PastTurn,
+)
+from manyminds.core.storage import NotFoundError, Store
+
+logger = logging.getLogger(__name__)
 
 INITIAL_LEADS = 10
 MAX_LEADS = 25
@@ -33,6 +50,10 @@ class CheckBusyError(ValueError):
     """The check still has research under way."""
 
 
+class ChatBusyError(ValueError):
+    """A reply is still being written."""
+
+
 class TooManyLeadsError(ValueError):
     """The list of leads waiting to be researched is full."""
 
@@ -41,13 +62,17 @@ def _squash(text: str) -> str:
     return " ".join(text.split())
 
 
-def _unique_leads(leads: Sequence[str], limit: int) -> list[str]:
+def _key(text: str) -> str:
+    return _squash(text).casefold()
+
+
+def _unique_leads(leads: Sequence[str], limit: int, existing: Sequence[str] = ()) -> list[str]:
     """Trim, drop blanks, and drop repeats that differ only in case or spacing."""
-    seen: set[str] = set()
+    seen: set[str] = {_key(text) for text in existing}
     kept: list[str] = []
     for lead in leads:
         text = lead.strip()
-        key = _squash(text).casefold()
+        key = _key(text)
         if key and key not in seen:
             seen.add(key)
             kept.append(text)
@@ -72,13 +97,17 @@ class CheckService:
         model: ModelClient,
         jobs: JobManager,
         *,
+        bus: EventBus,
         decompose_model: str,
+        chat_model: str,
         search_engine: SearchEngine,
     ) -> None:
         self.store = store
         self.jobs = jobs
         self._model = model
+        self._bus = bus
         self._decompose_model = decompose_model
+        self._chat_model = chat_model
         self._search_engine = search_engine
 
     async def create_check(self, text: str, instructions: str = "") -> Check:
@@ -105,13 +134,21 @@ class CheckService:
             raise CheckBusyError("Research is still running. Wait for it to finish, then delete.")
         self.store.delete_check(check_id)
 
-    def add_lead(self, check_id: str) -> Lead:
-        """Add an empty lead for the user to fill in."""
+    def add_lead(self, check_id: str, message_id: str | None = None) -> Lead:
+        """Add an empty lead for the user to fill in, under the given reply or the latest."""
         if len(self.store.list_draft_leads(check_id)) >= MAX_LEADS:
             raise TooManyLeadsError(
                 f"A list holds {MAX_LEADS} leads at most. Research these, then add the rest."
             )
-        return self.store.add_lead(check_id, "", LeadOrigin.MANUAL)
+        if message_id is None:
+            replies = [
+                message.id
+                for message in self.store.list_messages(check_id)
+                if message.role is MessageRole.ASSISTANT
+                and message.status is MessageStatus.COMPLETE
+            ]
+            message_id = replies[-1] if replies else None
+        return self.store.add_lead(check_id, "", LeadOrigin.MANUAL, message_id)
 
     def update_lead(self, lead_id: str, text: str) -> None:
         """Save a draft lead's wording. It may be left empty, but then it cannot be launched."""
@@ -139,6 +176,97 @@ class CheckService:
         for job in jobs:
             self.jobs.start(job.id)
         return threads
+
+    def launch_lead(self, lead_id: str, models: Sequence[str]) -> Thread:
+        """Start research on one lead, with one job per model. The other leads stay as
+        they are."""
+        if not models:
+            raise ValueError("Choose at least one model")
+        try:
+            lead = self.store.get_lead(lead_id)
+        except NotFoundError:
+            raise NothingToLaunchError("This lead is no longer there") from None
+        if lead.state is not LeadState.DRAFT:
+            raise NothingToLaunchError("This lead has already been started")
+        if not lead.text.strip():
+            raise ValueError("This lead is empty. Fill it in first.")
+        check = self.store.get_check(lead.check_id)
+        thread, jobs = self.store.launch_one_lead(
+            lead_id,
+            models=models,
+            search_engine=self._search_engine,
+            instructions=check.instructions,
+        )
+        for job in jobs:
+            self.jobs.start(job.id)
+        return thread
+
+    async def send(self, check_id: str, text: str) -> Message:
+        """Add the user's message to the conversation and return the model's reply.
+
+        Both are saved. A reply that could not be written is saved as failed, with the
+        reason. Leads the reply proposes are saved as drafts; nothing is started.
+        """
+        body = text.strip()
+        if not body:
+            raise ValueError("Write a message first.")
+        earlier = self.store.list_messages(check_id)
+        if any(message.status is MessageStatus.PENDING for message in earlier):
+            raise ChatBusyError("Wait for the reply before sending another message.")
+        context = self._chat_context(check_id, earlier)
+        reply = self.store.begin_turn(check_id, body)
+        self._bus.publish(ChatUpdated(check_id=check_id))
+        try:
+            done = await self._reply(check_id, reply.id, body, context)
+        except ModelError as error:
+            done = self.store.fail_message(reply.id, error.message)
+        except Exception as error:
+            # The text of an unexpected error may contain anything, so only its type is kept.
+            name = type(error).__name__
+            logger.error("A reply on check %s failed unexpectedly: %s", check_id, name)
+            done = self.store.fail_message(reply.id, f"Unexpected error ({name})")
+        self._bus.publish(ChatUpdated(check_id=check_id))
+        return done
+
+    async def _reply(
+        self, check_id: str, reply_id: str, body: str, context: ChatContext
+    ) -> Message:
+        answer = await self._model.converse(body, context, model=self._chat_model)
+        room = MAX_LEADS - len(self.store.list_draft_leads(check_id))
+        leads = _unique_leads(
+            answer.leads, max(room, 0), [lead.text for lead in self.store.list_leads(check_id)]
+        )
+        said = answer.body.strip()
+        if not said and not leads:
+            raise ModelError(ErrorKind.INVALID_OUTPUT, "The model sent back an empty reply.")
+        return self.store.finish_message(reply_id, said, leads)
+
+    def _chat_context(self, check_id: str, messages: Sequence[Message]) -> ChatContext:
+        turns = tuple(
+            PastTurn(message.role, message.body)
+            for message in messages
+            if message.status is MessageStatus.COMPLETE and message.body
+        )
+        threads = {thread.lead_id: thread for thread in self.store.list_threads(check_id)}
+        notes = []
+        for lead in self.store.list_leads(check_id):
+            thread = threads.get(lead.id)
+            if thread is None:
+                if lead.text.strip():
+                    notes.append(LeadNote(lead.text, NOT_STARTED))
+                continue
+            jobs = self.store.list_jobs(thread.id)
+            status = summarise(jobs)
+            if status is ThreadStatus.FINISHED:
+                reports = tuple(
+                    report for job in jobs if (report := self.store.get_report(job.id)) is not None
+                )
+                notes.append(LeadNote(thread.lead_text, FINISHED, reports))
+            elif status is ThreadStatus.FAILED:
+                notes.append(LeadNote(thread.lead_text, FAILED))
+            else:
+                notes.append(LeadNote(thread.lead_text, IN_PROGRESS))
+        return ChatContext(turns=turns, leads=tuple(notes))
 
     def retry_thread(self, thread_id: str) -> list[Job]:
         """Run a failed thread again, once for each model whose latest attempt failed."""

@@ -69,6 +69,17 @@ class LeadState(StrEnum):
     LAUNCHED = "launched"
 
 
+class MessageRole(StrEnum):
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+class MessageStatus(StrEnum):
+    PENDING = "pending"
+    COMPLETE = "complete"
+    FAILED = "failed"
+
+
 class JobStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
@@ -136,6 +147,21 @@ class Lead(_Record):
     position: int
     origin: LeadOrigin
     state: LeadState
+    created_at: datetime
+    message_id: str | None = None
+    """The reply in the conversation that this lead is listed under."""
+
+
+class Message(_Record):
+    """One turn in a check's conversation. A reply may have leads listed under it."""
+
+    id: str
+    check_id: str
+    seq: int
+    role: MessageRole
+    status: MessageStatus
+    body: str
+    error_message: str | None
     created_at: datetime
 
 
