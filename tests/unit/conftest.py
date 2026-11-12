@@ -38,11 +38,13 @@ def jobs(store: Store, model: RecordingModel, bus: EventBus) -> JobManager:
 
 
 @pytest.fixture
-def service(store: Store, model: RecordingModel, jobs: JobManager) -> CheckService:
+def service(store: Store, model: RecordingModel, jobs: JobManager, bus: EventBus) -> CheckService:
     return CheckService(
         store,
         model,
         jobs,
+        bus=bus,
         decompose_model="vendor/fast-model",
+        chat_model="vendor/chat-model",
         search_engine=SearchEngine.AUTO,
     )

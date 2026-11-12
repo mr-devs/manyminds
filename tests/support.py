@@ -14,7 +14,14 @@ from manyminds.core.models import (
     Stance,
     Usage,
 )
-from manyminds.core.ports import Decomposition, Progress, ProgressCallback, ResearchResult
+from manyminds.core.ports import (
+    ChatContext,
+    ChatReply,
+    Decomposition,
+    Progress,
+    ProgressCallback,
+    ResearchResult,
+)
 
 
 async def until(condition: Callable[[], bool], timeout: float = 2.0) -> None:
@@ -60,7 +67,17 @@ class RecordingModel:
     hold: bool = False
     """When true, each research call waits until the test calls release()."""
 
+    reply: str = "A reply"
+    """What the chat model says back."""
+    proposed: Sequence[str] = ()
+    """Leads the chat model proposes with its reply."""
+    converse_error: Exception | None = None
+    hold_reply: bool = False
+    """When true, the chat reply waits until the test calls release_reply()."""
+
     decompose_calls: list[dict[str, Any]] = field(default_factory=list)
+    converse_calls: list[dict[str, Any]] = field(default_factory=list)
+    _reply_gate: asyncio.Event = field(default_factory=asyncio.Event)
     research_calls: list[dict[str, Any]] = field(default_factory=list)
     active: int = 0
     max_active: int = 0
@@ -72,8 +89,13 @@ class RecordingModel:
     def release(self, lead: str) -> None:
         self._gate(lead).set()
 
+    def release_reply(self) -> None:
+        self._reply_gate.set()
+
     def release_all(self) -> None:
         self.hold = False
+        self.hold_reply = False
+        self._reply_gate.set()
         for gate in self._gates.values():
             gate.set()
 
@@ -92,6 +114,14 @@ class RecordingModel:
         if self.decompose_error is not None:
             raise self.decompose_error
         return Decomposition(title=self.title, leads=list(self.leads))
+
+    async def converse(self, message: str, context: ChatContext, *, model: str) -> ChatReply:
+        self.converse_calls.append({"message": message, "context": context, "model": model})
+        if self.hold_reply:
+            await self._reply_gate.wait()
+        if self.converse_error is not None:
+            raise self.converse_error
+        return ChatReply(body=self.reply, leads=list(self.proposed))
 
     async def research(
         self,
