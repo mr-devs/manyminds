@@ -177,3 +177,56 @@ async def test_a_finished_thread_does_not_offer_to_try_again(user: User) -> None
 
     await user.should_see("Findings about: Lead A")
     await user.should_not_see("Try again")
+
+
+# -- after the review ------------------------------------------------------------------------
+
+
+async def test_a_title_with_markup_is_shown_as_plain_text_in_the_sidebar(
+    services: Services, model: RecordingModel
+) -> None:
+    model.title = "<img src=x onerror=alert(1)> Claim"
+    await services.checks.create_check("Some text.")
+
+    async with user_simulation(build_root(services)) as user:
+        await user.open("/")
+
+        with user.scope(marker="sidebar-check-0"):
+            await user.should_see(kind=ui.label, content="<img src=x onerror=alert(1)> Claim")
+
+
+async def test_the_chosen_model_survives_adding_a_lead(user: User, services: Services) -> None:
+    await new_check(user, "The bridge opened in 1932.")
+    user.find(marker="model-picker").click()
+    user.find("vendor/other-model").click()
+
+    user.find("Add a lead").click()
+    await user.should_see(marker="lead-row-3")
+    with user.scope(marker="lead-row-3"):
+        user.find(kind=ui.input).type("A lead of my own")
+    user.find("Go").click()
+    await user.should_see(marker="thread-row-3")
+
+    (check,) = services.store.list_checks()
+    models = {
+        job.model
+        for thread in services.store.list_threads(check.id)
+        for job in services.store.list_jobs(thread.id)
+    }
+    assert models == {"vendor/other-model"}
+
+
+async def test_deleting_while_research_runs_is_refused_with_a_reason(
+    user: User, services: Services, model: RecordingModel
+) -> None:
+    model.hold = True
+    await new_check(user, "The bridge opened in 1932.")
+    user.find("Go").click()
+    await user.should_see("Threads")
+
+    user.find("Delete check").click()
+    await user.should_see("Delete this check and its research?")
+    user.find(marker="confirm-delete").click()
+
+    await user.should_see("Research is still running. Wait for it to finish, then delete.")
+    assert len(services.store.list_checks()) == 1
