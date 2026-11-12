@@ -47,7 +47,7 @@ async def test_generating_leads_shows_the_check_and_its_editable_leads(
     await user.should_see("Bridge claim")
     await user.should_see(TEXT)
     for lead in ("Lead A", "Lead B", "Lead C"):
-        await user.should_see(lead, kind=ui.input)
+        await user.should_see(kind=ui.input, content=lead)
     await user.should_see("Go")
     assert model.decompose_calls[0]["text"] == TEXT
     assert model.decompose_calls[0]["instructions"] == "Prefer archives"
@@ -291,7 +291,7 @@ async def test_evidence_is_grouped_by_stance_and_ungrounded_items_are_flagged(
         await user.should_see("It opened in 1934.")
         await user.should_see("Not found in search results")
         # With no title, the link shows the address itself.
-        await user.should_see("https://example.net/against", kind=ui.link)
+        await user.should_see(kind=ui.link, content="https://example.net/against")
 
 
 async def test_a_report_with_no_evidence_says_so(user: User, model: RecordingModel) -> None:

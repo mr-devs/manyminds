@@ -98,11 +98,19 @@ async def test_research_reports_progress_as_it_goes(fake: FakeModelClient) -> No
     )
 
     assert [progress.kind for progress in seen] == [
+        JobEventKind.THINKING,
         JobEventKind.SEARCHING,
         JobEventKind.SOURCES_FOUND,
+        JobEventKind.MESSAGE,
         JobEventKind.WRITING,
     ]
-    assert seen[0].detail == "When did the bridge open?"
+    thinking, searching, sources, message, _ = seen
+    assert searching.detail == "When did the bridge open?"
+    assert thinking.detail.startswith("Demo thinking")
+    assert "https://example.org/demo/" in sources.detail
+    assert message.detail.startswith("Demo notes")
+    # Long enough that a transcript of them has to scroll.
+    assert all(len(entry.detail.splitlines()) >= 3 for entry in (thinking, sources, message))
 
 
 async def test_research_waits_between_steps_without_really_sleeping(

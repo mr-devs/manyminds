@@ -22,14 +22,24 @@ LATE = [
     Progress(JobEventKind.MESSAGE, MESSAGE),
 ]
 
+# What the browser reports about the transcript's scroll position.
+AT_END = {"verticalPosition": 1400, "verticalSize": 2000, "verticalContainerSize": 600}
 SCROLLED_UP = {"verticalPosition": 100, "verticalSize": 2000, "verticalContainerSize": 600}
-AT_BOTTOM = {"verticalPosition": 1400, "verticalSize": 2000, "verticalContainerSize": 600}
+# The content grew by 600 pixels and the position did not move.
+GREW_WHILE_AT_END = {"verticalPosition": 1400, "verticalSize": 2600, "verticalContainerSize": 600}
+GREW_WHILE_SCROLLED_UP = {
+    "verticalPosition": 100,
+    "verticalSize": 2600,
+    "verticalContainerSize": 600,
+}
+# The page has just been laid out and the request to jump to the end has not landed yet.
+FIRST_LAYOUT = {"verticalPosition": 0, "verticalSize": 2000, "verticalContainerSize": 600}
 
 
-def scroll_event(vertical: dict[str, float]) -> dict[str, float]:
+def scroll_event(vertical: dict[str, int]) -> dict[str, int]:
     return {
         **vertical,
-        "verticalPercentage": 0.0,
+        "verticalPercentage": 0,
         "horizontalPosition": 0,
         "horizontalPercentage": 0,
         "horizontalSize": 0,
@@ -145,6 +155,7 @@ async def test_transcript_text_is_shown_as_plain_text(user: User, model: Recordi
     user.find("Generate leads").click()
     await user.should_see("Leads to research")
     user.find("Go").click()
+    await user.should_see("Threads")
     with user.scope(marker="thread-row-1"):
         await user.should_see("Finished")
     user.find(marker="thread-row-1").click()
@@ -157,6 +168,11 @@ async def test_transcript_text_is_shown_as_plain_text(user: User, model: Recordi
         assert list(ElementFilter(kind=ui.image)) == []
 
 
+def report(user: User, position: dict[str, int]) -> None:
+    """Have the browser report a scroll position for the transcript."""
+    user.find(kind=ui.scroll_area).trigger("scroll", scroll_event(position))
+
+
 async def test_opening_a_thread_jumps_to_the_end(
     user: User, model: RecordingModel, scrolls: list[dict[str, Any]]
 ) -> None:
@@ -166,28 +182,56 @@ async def test_opening_a_thread_jumps_to_the_end(
     assert all(call == {"percent": 1.0} for call in scrolls)
 
 
-async def test_the_view_follows_new_entries(
+async def test_the_jump_is_repeated_once_the_page_has_been_laid_out(
+    user: User, model: RecordingModel, scrolls: list[dict[str, Any]]
+) -> None:
+    await open_first_thread(user, model, hold=False)
+    seen_on_open = len(scrolls)
+
+    report(user, FIRST_LAYOUT)
+
+    assert len(scrolls) == seen_on_open + 1
+    assert scrolls[-1] == {"percent": 1.0}
+
+
+async def test_the_view_follows_when_the_content_grows(
     user: User, model: RecordingModel, scrolls: list[dict[str, Any]]
 ) -> None:
     await open_first_thread(user, model, hold=True)
-    seen_on_open = len(scrolls)
+    report(user, AT_END)
+    seen_before = len(scrolls)
 
     model.release("Lead A")
     await user.should_see("Summary")
+    report(user, GREW_WHILE_AT_END)
 
-    assert len(scrolls) > seen_on_open
+    assert len(scrolls) > seen_before
     assert scrolls[-1] == {"percent": 1.0}
+
+
+async def test_being_at_the_end_asks_for_no_further_movement(
+    user: User, model: RecordingModel, scrolls: list[dict[str, Any]]
+) -> None:
+    await open_first_thread(user, model, hold=False)
+    seen_on_open = len(scrolls)
+
+    report(user, AT_END)
+    report(user, AT_END)
+
+    assert len(scrolls) == seen_on_open
 
 
 async def test_scrolling_up_stops_the_view_from_following(
     user: User, model: RecordingModel, scrolls: list[dict[str, Any]]
 ) -> None:
     await open_first_thread(user, model, hold=True)
+    report(user, AT_END)
 
-    user.find(kind=ui.scroll_area).trigger("scroll", scroll_event(SCROLLED_UP))
+    report(user, SCROLLED_UP)
     seen_before = len(scrolls)
     model.release("Lead A")
     await user.should_see("Summary")
+    report(user, GREW_WHILE_SCROLLED_UP)
 
     assert len(scrolls) == seen_before
     assert len(transcript_texts(user)) == 7
@@ -197,11 +241,14 @@ async def test_returning_to_the_end_resumes_following(
     user: User, model: RecordingModel, scrolls: list[dict[str, Any]]
 ) -> None:
     await open_first_thread(user, model, hold=True)
+    report(user, AT_END)
+    report(user, SCROLLED_UP)
 
-    user.find(kind=ui.scroll_area).trigger("scroll", scroll_event(SCROLLED_UP))
-    user.find(kind=ui.scroll_area).trigger("scroll", scroll_event(AT_BOTTOM))
+    report(user, AT_END)
     seen_before = len(scrolls)
     model.release("Lead A")
     await user.should_see("Summary")
+    report(user, GREW_WHILE_AT_END)
 
     assert len(scrolls) > seen_before
+    assert scrolls[-1] == {"percent": 1.0}

@@ -39,11 +39,10 @@ def test_connect_ex_is_refused_too() -> None:
             sock.connect_ex(UNROUTABLE)
 
 
-@pytest.mark.parametrize("lookup", [socket.gethostbyname, socket.gethostbyname_ex])
-def test_older_name_lookups_are_refused(lookup: object) -> None:
-    assert callable(lookup)
+@pytest.mark.parametrize("lookup", ["gethostbyname", "gethostbyname_ex"])
+def test_older_name_lookups_are_refused(lookup: str) -> None:
     with pytest.raises(NetworkBlockedError, match=r"openrouter\.ai"):
-        getattr(socket, lookup.__name__)("openrouter.ai")
+        getattr(socket, lookup)("openrouter.ai")
 
 
 def test_datagrams_are_refused() -> None:
