@@ -38,18 +38,24 @@ class JobManager:
             await asyncio.sleep(0)
 
     async def _run(self, job_id: str) -> None:
+        """Run one job to an end state. Nothing that goes wrong here may escape the task."""
+        try:
+            await self._research(job_id)
+        except Exception as error:
+            # The text of an unexpected error may contain anything, so it is logged by type
+            # only and never stored or shown.
+            name = type(error).__name__
+            logger.error("Job %s failed unexpectedly: %s", job_id, name)
+            self._fail(job_id, ErrorKind.UNKNOWN, f"Unexpected error ({name})")
+
+    async def _research(self, job_id: str) -> None:
         job = self._store.get_job(job_id)
         thread = self._store.get_thread(job.thread_id)
         check = self._store.get_check(thread.check_id)
-        update = JobUpdated(check_id=check.id, thread_id=thread.id, job_id=job.id)
-
-        def record(progress: Progress) -> None:
-            self._store.add_job_event(job_id, progress.kind, progress.detail)
-            self._bus.publish(update)
 
         async with self._slots:
             self._store.mark_job_running(job_id)
-            record(Progress(JobEventKind.STARTED))
+            self._record(job_id, Progress(JobEventKind.STARTED))
             try:
                 result = await self._model.research(
                     thread.lead_text,
@@ -57,18 +63,23 @@ class JobManager:
                     job.instructions,
                     model=job.model,
                     search=job.search_engine,
-                    on_progress=record,
+                    on_progress=lambda progress: self._record(job_id, progress),
                 )
             except ModelError as error:
-                self._store.mark_job_failed(job_id, error.kind, error.message)
-                record(Progress(JobEventKind.FAILED, error.message))
-            except Exception as error:
-                # The text of an unexpected error may contain anything, so it is logged
-                # by type only and never stored or shown.
-                logger.error("Job %s failed unexpectedly: %s", job_id, type(error).__name__)
-                message = f"Unexpected error ({type(error).__name__})"
-                self._store.mark_job_failed(job_id, ErrorKind.UNKNOWN, message)
-                record(Progress(JobEventKind.FAILED, message))
-            else:
-                self._store.mark_job_done(job_id, result.report)
-                record(Progress(JobEventKind.FINISHED))
+                self._fail(job_id, error.kind, error.message)
+                return
+            self._store.mark_job_done(job_id, result.report)
+            self._record(job_id, Progress(JobEventKind.FINISHED))
+
+    def _record(self, job_id: str, progress: Progress) -> None:
+        self._store.add_job_event(job_id, progress.kind, progress.detail)
+        job = self._store.get_job(job_id)
+        thread = self._store.get_thread(job.thread_id)
+        self._bus.publish(JobUpdated(check_id=thread.check_id, thread_id=thread.id, job_id=job_id))
+
+    def _fail(self, job_id: str, kind: ErrorKind, message: str) -> None:
+        try:
+            self._store.mark_job_failed(job_id, kind, message)
+            self._record(job_id, Progress(JobEventKind.FAILED, message))
+        except Exception as error:
+            logger.error("Job %s could not be marked as failed: %s", job_id, type(error).__name__)

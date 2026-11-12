@@ -2,9 +2,11 @@
 
 from collections.abc import Sequence
 
+from manyminds.core.errors import ModelError
 from manyminds.core.jobs import JobManager
 from manyminds.core.models import (
     Check,
+    ErrorKind,
     Job,
     JobStatus,
     LeadOrigin,
@@ -70,9 +72,12 @@ class CheckService:
         decomposition = await self._model.decompose(
             text, instructions, count=INITIAL_LEADS, avoid=[], model=self._decompose_model
         )
+        leads = _unique_leads(decomposition.leads, INITIAL_LEADS)
+        if not leads:
+            raise ModelError(ErrorKind.INVALID_OUTPUT, "No leads could be generated for this text.")
         title = decomposition.title.strip() or _squash(text)[:TITLE_LENGTH]
         check = self.store.create_check(title=title, source_text=text, instructions=instructions)
-        for lead in _unique_leads(decomposition.leads, INITIAL_LEADS):
+        for lead in leads:
             self.store.add_lead(check.id, lead, LeadOrigin.GENERATED)
         return check
 

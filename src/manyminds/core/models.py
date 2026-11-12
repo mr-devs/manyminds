@@ -20,6 +20,9 @@ def _require_web_url(value: str) -> str:
 WebUrl = Annotated[NonBlank, AfterValidator(_require_web_url)]
 
 
+MAX_QUOTE_LENGTH = 2000
+
+
 class Stance(StrEnum):
     """How one quoted passage bears on the lead. Not a judgement on the claim."""
 
@@ -34,7 +37,7 @@ class _Strict(BaseModel):
 class EvidenceItem(_Strict):
     url: WebUrl
     title: str | None = None
-    quote: NonBlank
+    quote: Annotated[NonBlank, StringConstraints(max_length=MAX_QUOTE_LENGTH)]
     stance: Stance
     grounded: bool = False
     """The URL was among the results the search tool returned for this job."""

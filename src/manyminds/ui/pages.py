@@ -130,6 +130,16 @@ def check_page(services: Services, updates: JobUpdates, check_id: str) -> None:
                             started = thread.created_at.astimezone().strftime("%H:%M")
                             ui.label(started).classes(theme.MUTED)
 
+        emptied: set[str] = set()
+        """Leads whose box is currently empty; they are not saved until refilled."""
+
+        def stale() -> None:
+            # Another tab launched or removed these leads; show what is really there.
+            notice.set_text("These leads have already been launched.")
+            notice.set_visibility(True)
+            lead_editor.refresh()
+            threads.refresh()
+
         @ui.refreshable
         def lead_editor() -> None:
             drafts = store.list_draft_leads(check_id)
@@ -137,7 +147,7 @@ def check_page(services: Services, updates: JobUpdates, check_id: str) -> None:
                 return
             ui.label("Leads to research").classes(theme.SECTION)
             for index, lead in enumerate(drafts):
-                _lead_row(services, lead, index, lead_editor.refresh)
+                _lead_row(services, lead, index, emptied, lead_editor.refresh, stale)
             with ui.row().classes("items-center justify-between mt-2"):
                 picker = (
                     ui.select(list(services.research_models), value=services.research_models[0])
@@ -147,29 +157,58 @@ def check_page(services: Services, updates: JobUpdates, check_id: str) -> None:
                 )
 
                 def go() -> None:
+                    if emptied & {lead.id for lead in store.list_draft_leads(check_id)}:
+                        notice.set_text("A lead is empty. Fill it in or remove it.")
+                        notice.set_visibility(True)
+                        return
                     try:
                         services.checks.launch(check_id, [picker.value] if picker.value else [])
-                    except ValueError as error:
-                        ui.notify(str(error), type="warning")
+                    except NotFoundError:
+                        stale()
                         return
+                    except ValueError as error:
+                        notice.set_text(str(error))
+                        notice.set_visibility(True)
+                        return
+                    notice.set_visibility(False)
                     lead_editor.refresh()
                     threads.refresh()
 
                 ui.button("Go", on_click=go).props("unelevated rounded")
 
         lead_editor()
+        notice = ui.label().classes("text-sm text-amber-700")
+        notice.set_visibility(False)
         threads()
         _follow(updates, page, lambda event: event.check_id == check_id, update_status)
 
 
-def _lead_row(services: Services, lead: Lead, index: int, refresh: Callable[[], object]) -> None:
+def _lead_row(
+    services: Services,
+    lead: Lead,
+    index: int,
+    emptied: set[str],
+    refresh: Callable[[], object],
+    stale: Callable[[], None],
+) -> None:
     def save(event: ValueChangeEventArguments[str]) -> None:
-        # An emptied box is not saved; the lead keeps its last text until it is removed.
-        if (event.value or "").strip():
+        if not (event.value or "").strip():
+            # Not saved, and Go is refused until the box is refilled or the lead removed.
+            emptied.add(lead.id)
+            return
+        emptied.discard(lead.id)
+        try:
             services.checks.update_lead(lead.id, event.value)
+        except NotFoundError:
+            stale()
 
     def remove() -> None:
-        services.checks.remove_lead(lead.id)
+        emptied.discard(lead.id)
+        try:
+            services.checks.remove_lead(lead.id)
+        except NotFoundError:
+            stale()
+            return
         refresh()
 
     with ui.row().classes("items-center gap-2 w-full no-wrap").mark(f"lead-row-{index}"):

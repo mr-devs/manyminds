@@ -3,7 +3,8 @@
 import sqlite3
 import threading
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -114,9 +115,22 @@ class Store:
                     f"BEGIN; {MIGRATIONS[index]} PRAGMA user_version = {index + 1}; COMMIT;"
                 )
 
-    def _execute(self, sql: str, parameters: Sequence[Any] = ()) -> None:
+    @contextmanager
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
+        """Several writes that take effect together or not at all."""
         with self._lock:
-            self._db.execute(sql, parameters)
+            self._db.execute("BEGIN")
+            try:
+                yield self._db
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
+            self._db.execute("COMMIT")
+
+    def _execute(self, sql: str, parameters: Sequence[Any] = ()) -> int:
+        """Run one write and return how many rows it changed."""
+        with self._lock:
+            return self._db.execute(sql, parameters).rowcount
 
     def _all(self, sql: str, parameters: Sequence[Any] = ()) -> list[sqlite3.Row]:
         with self._lock:
@@ -175,26 +189,34 @@ class Store:
         return [Lead.model_validate(dict(row)) for row in rows]
 
     def update_lead_text(self, lead_id: str, text: str) -> None:
-        self._execute("UPDATE leads SET text = ? WHERE id = ?", (text, lead_id))
+        """Reword a draft lead. A launched lead is frozen."""
+        changed = self._execute(
+            "UPDATE leads SET text = ? WHERE id = ? AND state = ?", (text, lead_id, LeadState.DRAFT)
+        )
+        if not changed:
+            raise NotFoundError(f"draft lead {lead_id}")
 
     def remove_lead(self, lead_id: str) -> None:
-        self._execute("DELETE FROM leads WHERE id = ?", (lead_id,))
+        """Delete a draft lead. A launched lead, and the research under it, stays."""
+        changed = self._execute(
+            "DELETE FROM leads WHERE id = ? AND state = ?", (lead_id, LeadState.DRAFT)
+        )
+        if not changed:
+            raise NotFoundError(f"draft lead {lead_id}")
 
     # -- threads ----------------------------------------------------------------------
 
     def launch_lead(self, lead_id: str) -> Thread:
-        lead = self._get_lead(lead_id)
         thread_id = uuid.uuid4().hex
-        with self._lock:
-            self._db.execute("BEGIN")
-            self._db.execute(
-                "UPDATE leads SET state = ? WHERE id = ?", (LeadState.LAUNCHED, lead_id)
-            )
-            self._db.execute(
+        with self._transaction() as db:
+            lead = self._get_lead(lead_id)
+            if lead.state is not LeadState.DRAFT:
+                raise NotFoundError(f"draft lead {lead_id}")
+            db.execute("UPDATE leads SET state = ? WHERE id = ?", (LeadState.LAUNCHED, lead_id))
+            db.execute(
                 "INSERT INTO threads VALUES (?, ?, ?, ?, ?)",
                 (thread_id, lead.check_id, lead.id, lead.text, self._stamp()),
             )
-            self._db.execute("COMMIT")
         return self.get_thread(thread_id)
 
     def get_thread(self, thread_id: str) -> Thread:
@@ -246,17 +268,16 @@ class Store:
 
     def mark_job_done(self, job_id: str, report: Report) -> Job:
         stamp = self._stamp()
-        with self._lock:
-            self._db.execute("BEGIN")
-            self._db.execute(
+        with self._transaction() as db:
+            self.get_job(job_id)
+            db.execute(
                 "INSERT OR REPLACE INTO reports VALUES (?, ?, ?)",
                 (job_id, report.model_dump_json(), stamp),
             )
-            self._db.execute(
+            db.execute(
                 "UPDATE jobs SET status = ?, finished_at = ? WHERE id = ?",
                 (JobStatus.DONE, stamp, job_id),
             )
-            self._db.execute("COMMIT")
         return self.get_job(job_id)
 
     def mark_job_failed(self, job_id: str, kind: ErrorKind, message: str) -> Job:

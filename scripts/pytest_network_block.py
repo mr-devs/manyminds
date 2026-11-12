@@ -56,6 +56,28 @@ def _block_network(
             raise NetworkBlockedError(name)
         return real_getaddrinfo(host, *args, **kwargs)
 
+    real_sendto = socket.socket.sendto
+    real_gethostbyname = socket.gethostbyname
+    real_gethostbyname_ex = socket.gethostbyname_ex
+
+    def sendto(self: socket.socket, data: Any, *rest: Any) -> int:
+        if not _is_local(rest[-1]):
+            raise NetworkBlockedError(rest[-1])
+        return real_sendto(self, data, *rest)
+
+    def gethostbyname(host: str) -> str:
+        if host not in LOCAL_HOSTS:
+            raise NetworkBlockedError(host)
+        return real_gethostbyname(host)
+
+    def gethostbyname_ex(host: str) -> Any:
+        if host not in LOCAL_HOSTS:
+            raise NetworkBlockedError(host)
+        return real_gethostbyname_ex(host)
+
+    monkeypatch.setattr(socket.socket, "sendto", sendto)
+    monkeypatch.setattr(socket, "gethostbyname", gethostbyname)
+    monkeypatch.setattr(socket, "gethostbyname_ex", gethostbyname_ex)
     monkeypatch.setattr(socket.socket, "connect", connect)
     monkeypatch.setattr(socket.socket, "connect_ex", connect_ex)
     monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
