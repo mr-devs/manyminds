@@ -45,6 +45,13 @@ If the text you paste contains links, the app opens them (through OpenRouter and
 your computer) so that leads can be drawn from what they say. For a YouTube link that is the
 video's title and transcript.
 
+If a link will not open, as posts on X often will not, the app looks for the same material
+elsewhere, such as a mirror or archive. That step is given the link only, not your words.
+Images in your text or on the opened pages are shown to the model, which describes what is
+visible. The reply lists what was opened and what each image was taken to show, so you can
+check it. A description guides what is researched; it is never counted as evidence. Video is
+not watched, and a link that needs these extra steps can cost a few cents.
+
 What you paste and what you ask for share one box, so the app cannot tell a request you
 typed from one hidden in text you pasted. The steps that read that box can only open the
 links in it and suggest leads; they cannot search or start research.
