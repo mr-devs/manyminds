@@ -8,7 +8,14 @@ from pydantic import BaseModel, ValidationError
 
 from manyminds.core import prompts
 from manyminds.core.errors import ModelError
-from manyminds.core.models import ErrorKind, EvidenceItem, JobEventKind, Report, SearchEngine
+from manyminds.core.models import (
+    ErrorKind,
+    EvidenceItem,
+    JobEventKind,
+    Report,
+    SearchEngine,
+    Usage,
+)
 from manyminds.core.openrouter import websearch
 from manyminds.core.openrouter.schemas import (
     DECOMPOSITION_SCHEMA,
@@ -18,7 +25,7 @@ from manyminds.core.openrouter.schemas import (
     text_format,
 )
 from manyminds.core.openrouter.transport import Transport
-from manyminds.core.ports import Decomposition, Progress, ProgressCallback, ResearchResult, Usage
+from manyminds.core.ports import Decomposition, Progress, ProgressCallback, ResearchResult
 from manyminds.core.safety import quote_in_excerpt, url_key
 
 _Wire = TypeVar("_Wire", bound=BaseModel)
@@ -43,7 +50,12 @@ class _Tally:
         self.searches += websearch.search_count(response)
 
     def usage(self) -> Usage:
-        return Usage(self.input_tokens, self.output_tokens, self.cost, self.searches)
+        return Usage(
+            input_tokens=self.input_tokens,
+            output_tokens=self.output_tokens,
+            cost=self.cost,
+            searches=self.searches,
+        )
 
 
 class OpenRouterModelClient:

@@ -22,6 +22,7 @@ from manyminds.core.models import (
     Report,
     SearchEngine,
     Thread,
+    Usage,
 )
 
 # Each entry moves the schema forward by one version. Never edit an entry that has shipped;
@@ -80,6 +81,7 @@ MIGRATIONS: Sequence[str] = (
         created_at TEXT NOT NULL
     );
     """,
+    "ALTER TABLE jobs ADD COLUMN usage TEXT;",
 )
 
 
@@ -326,13 +328,13 @@ class Store:
 
     def get_job(self, job_id: str) -> Job:
         row = self._one("SELECT * FROM jobs WHERE id = ?", (job_id,), f"job {job_id}")
-        return Job.model_validate(dict(row))
+        return _job(row)
 
     def list_jobs(self, thread_id: str) -> list[Job]:
         rows = self._all(
             "SELECT * FROM jobs WHERE thread_id = ? ORDER BY created_at, rowid", (thread_id,)
         )
-        return [Job.model_validate(dict(row)) for row in rows]
+        return [_job(row) for row in rows]
 
     def mark_job_running(self, job_id: str) -> Job:
         self._write(
@@ -341,7 +343,7 @@ class Store:
         )
         return self.get_job(job_id)
 
-    def mark_job_done(self, job_id: str, report: Report) -> Job:
+    def mark_job_done(self, job_id: str, report: Report, usage: Usage | None = None) -> Job:
         stamp = self._stamp()
         with self._transaction() as db:
             self.get_job(job_id)
@@ -350,8 +352,8 @@ class Store:
                 (job_id, report.model_dump_json(), stamp),
             )
             db.execute(
-                "UPDATE jobs SET status = ?, finished_at = ? WHERE id = ?",
-                (JobStatus.DONE, stamp, job_id),
+                "UPDATE jobs SET status = ?, finished_at = ?, usage = ? WHERE id = ?",
+                (JobStatus.DONE, stamp, usage.model_dump_json() if usage else None, job_id),
             )
         return self.get_job(job_id)
 
@@ -389,3 +391,9 @@ class Store:
             "SELECT * FROM job_events WHERE job_id = ? AND seq > ? ORDER BY seq", (job_id, after)
         )
         return [JobEvent.model_validate(dict(row)) for row in rows]
+
+
+def _job(row: sqlite3.Row) -> Job:
+    fields = dict(row)
+    raw = fields.pop("usage")
+    return Job.model_validate({**fields, "usage": Usage.model_validate_json(raw) if raw else None})

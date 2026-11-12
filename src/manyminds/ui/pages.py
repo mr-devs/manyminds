@@ -14,7 +14,7 @@ from manyminds.core.services import Services
 from manyminds.core.storage import NotFoundError
 from manyminds.ui import theme
 from manyminds.ui.follow import Follower
-from manyminds.ui.report_view import report_view
+from manyminds.ui.report_view import report_view, usage_line
 
 JobUpdates = Event[JobUpdated]
 
@@ -64,6 +64,8 @@ def home_page(services: Services) -> None:
                 button.classes(theme.BUTTON)
         problem = ui.label().classes(theme.ERROR + " text-center")
         problem.set_visibility(False)
+        if services.notice:
+            ui.label(services.notice).classes(theme.MUTED + " text-center").mark("notice")
 
         def show_problem(message: str) -> None:
             problem.set_text(message)
@@ -317,6 +319,9 @@ def thread_page(services: Services, updates: JobUpdates, check_id: str, thread_i
                         concluded.add(job.id)
                         with ui.column().classes("mm-report"):
                             report_view(report)
+                            used = usage_line(job.usage)
+                            if used:
+                                ui.label(used).classes(theme.MUTED).mark("usage")
             theme.set_status(status, services.checks.thread_status(thread_id))
             if follower.following:
                 area.scroll_to(percent=1.0)

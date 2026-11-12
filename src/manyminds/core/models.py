@@ -105,6 +105,16 @@ class _Record(BaseModel):
     model_config = ConfigDict(frozen=True)
 
 
+class Usage(_Record):
+    """What one job consumed, summed over every model call it made."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost: float = 0.0
+    """US dollars, as reported by the provider."""
+    searches: int = 0
+
+
 class Check(_Record):
     """One pasted text and everything that follows from it."""
 
@@ -153,6 +163,8 @@ class Job(_Record):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    usage: Usage | None = None
+    """Set when the job finishes. Failed jobs do not record what they used."""
 
 
 class JobEvent(_Record):

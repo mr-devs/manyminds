@@ -4,7 +4,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from manyminds.core.models import JobEventKind, Report, SearchEngine
+from manyminds.core.models import JobEventKind, Report, SearchEngine, Usage
 
 
 @dataclass(frozen=True)
@@ -24,17 +24,6 @@ class Progress:
 
 
 ProgressCallback = Callable[[Progress], None]
-
-
-@dataclass(frozen=True)
-class Usage:
-    """What one job consumed, summed over every model call it made."""
-
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cost: float = 0.0
-    """US dollars, as reported by the provider."""
-    searches: int = 0
 
 
 @dataclass(frozen=True)
