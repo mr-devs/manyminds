@@ -44,6 +44,8 @@ class RecordingModel:
     decompose_error: Exception | None = None
     failures: dict[str, Exception] = field(default_factory=dict)
     reports: dict[str, Report] = field(default_factory=dict)
+    late_progress: dict[str, list[Progress]] = field(default_factory=dict)
+    """Progress to report for a lead once it is released, before it finishes."""
     """Reports to return for particular leads, in place of the default one."""
     hold: bool = False
     """When true, each research call waits until the test calls release()."""
@@ -107,6 +109,8 @@ class RecordingModel:
             if self.hold:
                 await self._gate(lead).wait()
             await asyncio.sleep(0)
+            for progress in self.late_progress.get(lead, []):
+                on_progress(progress)
             if lead in self.failures:
                 raise self.failures[lead]
             return ResearchResult(report=self.reports.get(lead) or report_for(lead))
