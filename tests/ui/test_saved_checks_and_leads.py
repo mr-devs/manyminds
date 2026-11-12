@@ -245,7 +245,7 @@ async def test_a_check_can_be_deleted_from_the_sidebar(
 
     async with user_simulation(build_root(services)) as user:
         await user.open("/")
-        user.find(marker="sidebar-delete-0").click()
+        user.find(marker="sidebar-delete-0").trigger("click.stop")
         await user.should_see("Delete this check and its research?")
         user.find(marker="confirm-delete").click()
 
@@ -265,7 +265,8 @@ async def test_deleting_another_check_from_the_sidebar_leaves_the_open_one_in_vi
 
     async with user_simulation(build_root(services)) as user:
         await user.open(f"/check/{older.id}")
-        user.find(marker="sidebar-delete-0").click()
+        user.find(marker="sidebar-delete-0").trigger("click.stop")
+        await user.should_see("Delete this check and its research?")
         user.find(marker="confirm-delete").click()
 
         await user.should_not_see("Newer check")
@@ -278,7 +279,8 @@ async def test_deleting_the_open_check_from_the_sidebar_returns_home(
 ) -> None:
     await new_check(user, "The bridge opened in 1932.")
 
-    user.find(marker="sidebar-delete-0").click()
+    user.find(marker="sidebar-delete-0").trigger("click.stop")
+    await user.should_see("Delete this check and its research?")
     user.find(marker="confirm-delete").click()
 
     await user.should_see("What would you like to check?")
@@ -292,10 +294,14 @@ async def test_the_sidebar_title_changes_when_the_leads_arrive(
     await user.open("/")
     user.find(marker="composer").type("The bridge opened in 1932.")
     user.find("Generate leads").click()
+    await user.should_see(marker="sidebar-check-0")
     with user.scope(marker="sidebar-check-0"):
         await user.should_see("The bridge opened in 1932.")
 
     model.release_decompose()
 
+    # The sidebar is redrawn, so its entry is looked up afresh once the leads are in.
+    await user.should_see(marker="lead-list")
     with user.scope(marker="sidebar-check-0"):
         await user.should_see("Bridge claim")
+        await user.should_not_see("The bridge opened in 1932.")
