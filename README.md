@@ -1,8 +1,8 @@
 # manyminds
 
 **Status: early alpha.** The core loop works on real models: paste text, get leads, research
-them in parallel, read cited reports, and come back to saved checks later. Settings,
-conversations about the evidence and key storage are still to come. See
+them in parallel, read cited reports, ask about what was found, and come back to saved checks
+later. Settings and key storage are still to come. See
 [`PLAN.md`](https://github.com/mr-devs/manyminds/blob/main/PLAN.md) for what is done and what is
 next.
 
@@ -12,11 +12,16 @@ A Python app that helps you check claims you find on the web. It runs on your ow
 your own [OpenRouter](https://openrouter.ai) API key, and its only interface is a local
 browser app.
 
-You paste a piece of text. The app proposes *leads*: specific threads that could be researched
-to see whether the text is supported by evidence. You edit that list, and one research agent
-per lead runs in parallel and writes a focused report of quoted, linked evidence. You can read
-finished reports while others are still running, and open any thread to see what the agent
-searched for and found.
+Each check is a conversation. You paste a piece of text or a link, with anything you want to
+say about how to check it. The app replies with *leads*: specific threads that could be
+researched to see whether the text is supported by evidence. Press **Go** on the leads you
+care about, reword or remove others, or leave them. Each started lead gets its own research
+agent, which runs alongside the others and writes a focused report of quoted, linked
+evidence. Open any thread to see what its agent searched for and found.
+
+The conversation continues underneath. Ask it to summarise what the threads found or to
+suggest further leads. It answers from the finished reports and cannot search for itself, so
+anything new has to go through a lead that you choose to start.
 
 manyminds gathers evidence for you to judge. It does not issue verdicts on what is true. Each
 piece of evidence links to its source, and is flagged when the link or the quote could not be
@@ -39,6 +44,10 @@ disk, logged or printed. Storing it in the operating system's keychain is planne
 If the text you paste contains links, the app opens them (through OpenRouter and Exa, not from
 your computer) so that leads can be drawn from what they say. For a YouTube link that is the
 video's title and transcript.
+
+What you paste and what you ask for share one box, so the app cannot tell a request you
+typed from one hidden in text you pasted. The steps that read that box can only open the
+links in it and suggest leads; they cannot search or start research.
 
 Research agents search the web and open pages, which can contain text written to mislead a
 model. What they read is treated as material to examine and their output is checked against a

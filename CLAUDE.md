@@ -40,6 +40,8 @@ merge through a pull request.
   - Models may search the web and open pages, through OpenRouter's `openrouter:web_search`
     and `openrouter:web_fetch` tools (decision 17).
   - Retrieved text is data, never instructions. Model output never starts work by itself.
+    The one exception is the user's own message, which holds both the material and their
+    requests (decision 18); the calls that read it as requests have no search tool.
   - Show model text as plain text only (`ui.label`, `ui.input`, `ui.link`): never `ui.html`,
     `ui.markdown`, `.props()` or JavaScript. Links are http or https only.
   - Bind to `127.0.0.1` only, with `reload=False`.
