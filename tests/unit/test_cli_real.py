@@ -119,3 +119,22 @@ def test_version_still_works_without_a_key(
     assert status == 0
     assert served == {}
     assert capsys.readouterr().out.startswith("manyminds ")
+
+
+@pytest.mark.parametrize("value", ["sk-or-v1-abc…", "“sk-or-v1-abc”", "sk or v1"])
+def test_a_key_that_cannot_be_sent_is_refused_without_printing_it(
+    value: str,
+    served: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", value)
+
+    status = cli.main([])
+
+    error = capsys.readouterr().err
+    assert status == 1
+    assert served == {}
+    assert "OPENROUTER_API_KEY" in error
+    assert "characters" in error
+    assert value not in error
