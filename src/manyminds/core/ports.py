@@ -40,6 +40,8 @@ class PastTurn:
 
     role: MessageRole
     body: str
+    images: tuple[str | None, ...] = ()
+    """What each image attached to it was said to show; None where one could not be read."""
 
 
 NOT_STARTED = "not started"
@@ -83,6 +85,7 @@ class ModelClient(Protocol):
         count: int,
         avoid: Sequence[str],
         model: str,
+        images: Sequence[str | None] = (),
         on_progress: ProgressCallback | None = None,
     ) -> Decomposition: ...
 
@@ -95,6 +98,7 @@ class ModelClient(Protocol):
         *,
         model: str,
         search: SearchEngine = SearchEngine.EXA,
+        images: Sequence[str | None] = (),
         on_progress: ProgressCallback | None = None,
     ) -> ChatReply: ...
 

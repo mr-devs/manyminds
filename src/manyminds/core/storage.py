@@ -606,10 +606,18 @@ class Store:
             "UPDATE attachments SET description = ? WHERE id = ?", (description, attachment_id)
         )
 
+    def list_image_descriptions(self, message_id: str) -> list[str | None]:
+        """What each image attached to a message was said to show, without loading the
+        images themselves."""
+        rows = self._all(
+            "SELECT description FROM attachments WHERE message_id = ? ORDER BY position",
+            (message_id,),
+        )
+        return [row["description"] for row in rows]
+
     def message_as_read(self, message: Message) -> str:
         """A message's words together with what its attached images were taken to show."""
-        descriptions = [image.description for image in self.list_attachments(message.id)]
-        return as_read(message.body, descriptions)
+        return as_read(message.body, self.list_image_descriptions(message.id))
 
     def source_for_lead(self, lead_id: str) -> str:
         """What the user had said when a lead was put forward: every message of theirs up to

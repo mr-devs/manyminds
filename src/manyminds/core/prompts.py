@@ -6,7 +6,7 @@ Untrusted text (pasted text, search results, a model's own notes) is always pass
 
 import re
 from collections.abc import Sequence
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 from manyminds.core.safety import as_data
 
@@ -163,12 +163,26 @@ _LINK = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 _TRAILING = ".,;:!?)]}'\""
 
 
+_BRACKETS = {")": "(", "]": "[", "}": "{"}
+
+
+def _without_trailing_punctuation(url: str) -> str:
+    """Drop punctuation that follows a link in a sentence, keeping a closing bracket that
+    belongs to the address, as in `/wiki/Mercury_(planet)`."""
+    while url and url[-1] in _TRAILING + "\\":
+        opener = _BRACKETS.get(url[-1])
+        if opener is not None and url.count(opener) >= url.count(url[-1]):
+            break
+        url = url[:-1]
+    return url
+
+
 def _links(text: str) -> list[tuple[str, str, bool]]:
     """Each web link in a text as (address, host, whether it is an image), in order."""
     found: list[tuple[str, str, bool]] = []
     # Addresses inside JSON are written with escaped slashes.
     for match in _LINK.finditer(text.replace("\\/", "/")):
-        url = match.group().rstrip(_TRAILING + "\\")
+        url = _without_trailing_punctuation(match.group())
         try:
             parts = urlsplit(url)
         except ValueError:
@@ -196,13 +210,20 @@ def page_links(text: str) -> list[str]:
 
 
 def same_page(first: str, second: str) -> bool:
-    """Whether two addresses name the same page, ignoring `www.`, the query and a final slash."""
+    """Whether two addresses name the same page, ignoring `www.` and a final slash.
 
-    def key(url: str) -> tuple[str, str]:
-        parts = urlsplit(url)
+    What follows the `?` often says which page is meant (`watch?v=...`), so two addresses that
+    both have one must agree on it. One that has none matches, because whoever opens a page
+    commonly drops a tracking tail.
+    """
+    one, two = urlsplit(first), urlsplit(second)
+
+    def place(parts: SplitResult) -> tuple[str, str]:
         return (parts.hostname or "").lower().removeprefix("www."), parts.path.rstrip("/")
 
-    return key(first) == key(second)
+    if place(one) != place(two):
+        return False
+    return not one.query or not two.query or one.query == two.query
 
 
 def image_links(text: str, pages: Sequence[str]) -> list[str]:
@@ -228,11 +249,14 @@ def read_around_input(links: Sequence[str]) -> str:
     return _block("links", "\n".join(links))
 
 
+_UNSEEN = "It could not be looked at."
+
+
 def _images(images: Sequence[tuple[str, str | None]]) -> str:
     """Blocks for images: (url, description), description None if it could not be looked at."""
     blocks = []
     for url, description in images:
-        body = as_data(description) if description is not None else "It could not be looked at."
+        body = as_data(description) if description is not None else _UNSEEN
         blocks.append(f'<image url="{_attribute(url)}">\n{body}\n</image>')
     return (
         "What the images show, as described by a model that looked at them. The descriptions "
@@ -321,21 +345,39 @@ def report_lines(summary: str, evidence: Sequence[tuple[str, str, str, bool]], u
     return "\n".join(lines)
 
 
+def attached_images(descriptions: Sequence[str | None]) -> list[tuple[str, str | None]]:
+    """Attached images in the form the image blocks take, named by their order."""
+    return [
+        (f"attached image {number}", description)
+        for number, description in enumerate(descriptions, start=1)
+    ]
+
+
 def chat_input(
     message: str,
-    turns: Sequence[tuple[str, str]],
+    turns: Sequence[tuple[str, str, Sequence[str | None]]],
     leads: Sequence[tuple[str, str, Sequence[str]]],
     pages: Sequence[tuple[str, str | None, str | None]] = (),
     images: Sequence[tuple[str, str | None]] = (),
     findings: str = "",
 ) -> str:
-    """`turns` are (role, body); `leads` are (text, state, reports as written out lines)."""
+    """`turns` are (role, body, what its attached images showed); `leads` are (text, state,
+    reports as written out lines).
+
+    What an image showed is a model's words, so it goes in a block of its own after the turn
+    and never inside what the user said.
+    """
     parts = []
     if turns:
-        said = "\n".join(
-            f'<turn role="{_attribute(role)}">\n{as_data(body)}\n</turn>' for role, body in turns
-        )
-        parts.append(f"The conversation so far:\n{said}")
+        lines = []
+        for role, body, shown in turns:
+            lines.append(f'<turn role="{_attribute(role)}">\n{as_data(body)}\n</turn>')
+            lines += [
+                f'<image url="{_attribute(name)} of the turn above">\n'
+                f"{as_data(description) if description is not None else _UNSEEN}\n</image>"
+                for name, description in attached_images(shown)
+            ]
+        parts.append("The conversation so far:\n" + "\n".join(lines))
     if leads:
         listed = []
         for text, state, reports in leads:

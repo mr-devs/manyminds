@@ -97,6 +97,7 @@ class FakeModelClient:
         count: int,
         avoid: Sequence[str],
         model: str,
+        images: Sequence[str | None] = (),
         on_progress: ProgressCallback | None = None,
     ) -> Decomposition:
         if on_progress is not None:
@@ -118,6 +119,7 @@ class FakeModelClient:
         *,
         model: str,
         search: SearchEngine = SearchEngine.EXA,
+        images: Sequence[str | None] = (),
         on_progress: ProgressCallback | None = None,
     ) -> ChatReply:
         await self._sleep(0.8)

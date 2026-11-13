@@ -102,7 +102,12 @@ def _run_real(api_key: str, port: int | None, show: bool) -> int:
     from manyminds.core.services import build_services
     from manyminds.ui import app
 
-    folder = data_dir()
+    try:
+        folder = data_dir()
+    except RuntimeError as error:
+        named = os.environ.get(DATA_DIR_VARIABLE, "")
+        print(BAD_FOLDER.format(folder=named, reason=type(error).__name__), file=sys.stderr)
+        return 1
     try:
         # Held until the process ends, so a second copy cannot start on the same data.
         lock = hold_instance_lock(folder)

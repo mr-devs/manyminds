@@ -108,6 +108,9 @@ class _ImageTray:
             .props(f'accept="{",".join(IMAGE_TYPES)}"')
             .classes("mm-hidden")
         )
+        # Emptied only once every file of a batch has arrived: emptying it sooner would
+        # abandon the ones still on their way.
+        self._uploader.on("finish", self._uploader.reset)
 
     def _show(self) -> None:
         if not self._waiting:
@@ -126,7 +129,6 @@ class _ImageTray:
 
     async def _received(self, event: UploadEventArguments) -> None:
         image = ImageFile(event.file.content_type, await event.file.read())
-        self._uploader.reset()
         try:
             check_images([*self.images(), image])
         except ValueError as error:
@@ -211,8 +213,12 @@ def home_page(services: Services, checks_changed: Callable[[], object]) -> None:
         if services.notice:
             ui.label(services.notice).classes(theme.MUTED + " text-center").mark("notice")
 
+        sent = {"already": False}
+
         def generate() -> None:
             text = composer.value or ""
+            if sent["already"]:
+                return  # A second press before the page has changed must not start a second check.
             if not text.strip() and not tray.images():
                 show_problem("Paste some text first.")
                 return
@@ -226,6 +232,7 @@ def home_page(services: Services, checks_changed: Callable[[], object]) -> None:
                 show_problem("Something went wrong and nothing was saved. Please try again.")
                 return
             # The leads are worked out in the open, in the conversation itself.
+            sent["already"] = True
             checks_changed()
             ui.navigate.to(f"/check/{check.id}")
 
@@ -449,10 +456,7 @@ def check_page(
                 is_reply = message.role is MessageRole.ASSISTANT
                 known = drawn.get(message.id)
                 # A message is redrawn when its status changes or one of its images is read.
-                state = (
-                    message.status,
-                    tuple(image.description for image in store.list_attachments(message.id)),
-                )
+                state = (message.status, tuple(store.list_image_descriptions(message.id)))
                 if known is None or known[1] != state:
                     slot: ui.element
                     if known is None:

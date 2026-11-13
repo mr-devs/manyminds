@@ -48,6 +48,10 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024
 IMAGE_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif")
 IMAGE_TYPES_PROBLEM = "Only PNG, JPEG, WebP and GIF images can be attached."
 TOO_MANY_IMAGES = f"Attach at most {MAX_IMAGES} images to a message."
+LIST_FULL = (
+    "The list of waiting leads is full, so the leads proposed here were not added. "
+    "Research or remove some, then ask again."
+)
 TITLE_LENGTH = 60
 MAX_TITLE_LENGTH = 120
 
@@ -186,9 +190,13 @@ class CheckService:
             images=images,
         )
 
-    async def _understood(self, said: Message, record: ProgressCallback) -> str:
-        """What the user said, with what each attached image shows. Images not yet looked at
-        are shown to the model now; one that cannot be is said to be so, and work goes on."""
+    async def _look_at_images(self, said: Message, record: ProgressCallback) -> list[str | None]:
+        """What each image attached to a message shows. Images not yet looked at are shown
+        to the model now; one that cannot be is left as None, and work goes on.
+
+        The descriptions are a model's words. They are handed on apart from what the user
+        wrote, so that nothing seen in an image is taken for a request or a link of theirs.
+        """
         for number, image in enumerate(self.store.list_attachments(said.id), start=1):
             if image.description is not None:
                 continue
@@ -200,18 +208,19 @@ class CheckService:
             except ModelError:
                 continue
             self.store.describe_attachment(image.id, description)
-        return self.store.message_as_read(said)
+        return self.store.list_image_descriptions(said.id)
 
     async def _opening(self, reply: Message, instructions: str) -> Message:
         """Work out the leads for a check and fill in its opening reply."""
         record = self._recorder(reply)
         said = self.store.list_messages(reply.check_id)[0]
         decomposition = await self._model.decompose(
-            await self._understood(said, record),
+            said.body,
             instructions,
             count=INITIAL_LEADS,
             avoid=[],
             model=self._decompose_model,
+            images=await self._look_at_images(said, record),
             on_progress=record,
         )
         leads = _unique_leads(decomposition.leads, INITIAL_LEADS)
@@ -244,6 +253,8 @@ class CheckService:
         if check_id in self._replying:
             raise CheckBusyError("A reply is still being written. Wait for it, then delete.")
         self.store.delete_check(check_id)
+        # So that other tabs showing this check, or listing it, find out.
+        self._bus.publish(ChatUpdated(check_id=check_id))
 
     def add_lead(self, check_id: str, message_id: str | None = None) -> Lead:
         """Add an empty lead for the user to fill in, under the given reply or the latest."""
@@ -370,27 +381,30 @@ class CheckService:
             if message.seq == reply.seq - 1
         )
         answer = await self._model.converse(
-            await self._understood(asked, record),
+            asked.body,
             context,
             model=self._chat_model,
             search=self._search_engine,
+            images=await self._look_at_images(asked, record),
             on_progress=record,
         )
         room = MAX_LEADS - len(self.store.list_draft_leads(check_id))
-        leads = _unique_leads(
-            answer.leads, max(room, 0), [lead.text for lead in self.store.list_leads(check_id)]
-        )
+        existing = [lead.text for lead in self.store.list_leads(check_id)]
+        fresh = _unique_leads(answer.leads, len(answer.leads), existing)
+        leads = fresh[: max(room, 0)]
         said = answer.body.strip()
+        if fresh and not leads:
+            said = f"{said}\n\n{LIST_FULL}".strip()
         if not said and not leads:
             raise ModelError(ErrorKind.INVALID_OUTPUT, "The model sent back an empty reply.")
         return self.store.finish_message(reply.id, said, leads)
 
     def _chat_context(self, check_id: str, messages: Sequence[Message]) -> ChatContext:
         turns = tuple(
-            PastTurn(message.role, said)
+            PastTurn(message.role, message.body, images)
             for message in messages
             if message.status is MessageStatus.COMPLETE
-            and (said := self.store.message_as_read(message))
+            and ((images := tuple(self.store.list_image_descriptions(message.id))) or message.body)
         )
         threads = {thread.lead_id: thread for thread in self.store.list_threads(check_id)}
         notes = []

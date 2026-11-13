@@ -127,17 +127,19 @@ class OpenRouterModelClient:
         count: int,
         avoid: Sequence[str],
         model: str,
+        images: Sequence[str | None] = (),
         on_progress: ProgressCallback | None = None,
     ) -> Decomposition:
         tally = _Tally()
         tell = on_progress or _silent
         shared = await self._shared(text, model, tally, tell)
+        pictures = prompts.attached_images(images) + shared.images
         tell(Progress(JobEventKind.NOTE, "Writing the leads"))
         body = {
             "model": model,
             "instructions": prompts.DECOMPOSE_INSTRUCTIONS,
             "input": prompts.decompose_input(
-                text, instructions, count, avoid, shared.pages, shared.images
+                text, instructions, count, avoid, shared.pages, pictures
             ),
         }
         wire = await self._structured(
@@ -152,6 +154,7 @@ class OpenRouterModelClient:
         *,
         model: str,
         search: SearchEngine = SearchEngine.EXA,
+        images: Sequence[str | None] = (),
         on_progress: ProgressCallback | None = None,
     ) -> ChatReply:
         """Answer in the main conversation.
@@ -161,7 +164,8 @@ class OpenRouterModelClient:
         """
         tally = _Tally()
         tell = on_progress or _silent
-        shared = await self._shared(message, model, tally, tell)
+        shared = await self._shared(message, model, tally, tell, tolerant=True)
+        pictures = prompts.attached_images(images) + shared.images
         leads = [
             (
                 note.text,
@@ -180,15 +184,13 @@ class OpenRouterModelClient:
             )
             for note in context.leads
         ]
-        turns = [(turn.role.value, turn.body) for turn in context.turns]
-        given = prompts.chat_input(message, turns, leads, shared.pages, shared.images)
+        turns = [(turn.role.value, turn.body, turn.images) for turn in context.turns]
+        given = prompts.chat_input(message, turns, leads, shared.pages, pictures)
         findings = await self._look_up(given, model, search, tally, tell)
         body = {
             "model": model,
             "instructions": prompts.CHAT_INSTRUCTIONS,
-            "input": prompts.chat_input(
-                message, turns, leads, shared.pages, shared.images, findings
-            ),
+            "input": prompts.chat_input(message, turns, leads, shared.pages, pictures, findings),
         }
         wire = await self._structured(body, "chat_reply", CHAT_SCHEMA, WireChatReply, tally)
         return ChatReply(body=wire.reply, leads=wire.leads)
@@ -228,7 +230,13 @@ class OpenRouterModelClient:
         return prompts.search_findings(notes, [(c.url, c.title, c.passages) for c in cited])
 
     async def _shared(
-        self, text: str, model: str, tally: _Tally, tell: ProgressCallback
+        self,
+        text: str,
+        model: str,
+        tally: _Tally,
+        tell: ProgressCallback,
+        *,
+        tolerant: bool = False,
     ) -> _Shared:
         """Work out what the links and images in the user's text show.
 
@@ -236,7 +244,14 @@ class OpenRouterModelClient:
         whether linked directly or found on those pages, are each shown to the model.
         """
         links = prompts.page_links(text)[: prompts.MAX_LINKED_PAGES]
-        opened = _opened(await self._read_links(text, model, tally, tell))
+        try:
+            opened = _opened(await self._read_links(text, model, tally, tell))
+        except ModelError:
+            # A reply can still be written without the links; leads cannot be trusted to.
+            if not tolerant:
+                raise
+            tell(Progress(JobEventKind.NOTE, "The links could not be opened"))
+            return _Shared(links, [], [])
         # Judged against what the user wrote, not what the model says it tried: a link it
         # never tried is still unread, and an address it made up is never passed on.
         unread = [
