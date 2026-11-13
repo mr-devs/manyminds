@@ -229,6 +229,36 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
     font-size: 14px; line-height: 1.6; color: #48484a; white-space: pre-wrap;
     overflow-wrap: anywhere;
 }
+/* Markdown written by a model, shown as formatted text. */
+.mm-md { gap: 10px; align-items: stretch; width: 100%; }
+.mm-md-p, .mm-md-line { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mm-md-lines { gap: 2px; align-items: stretch; }
+.mm-md-line > * { display: inline; white-space: pre-wrap; }
+.mm-md-line > .mm-link { font-size: inherit; }
+.mm-md-bold { font-weight: 600; }
+.mm-md-italic { font-style: italic; }
+.mm-md-code {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.9em;
+    background: rgba(0, 0, 0, 0.055); border-radius: 4px; padding: 1px 5px;
+}
+.mm-md-h { font-weight: 600; letter-spacing: -0.01em; margin-top: 8px; }
+.mm-md-h1, .mm-md-h2 { font-size: 1.2em; }
+.mm-md-h3, .mm-md-h4, .mm-md-h5, .mm-md-h6 { font-size: 1.06em; }
+.mm-md-item { flex-wrap: nowrap; gap: 8px; align-items: flex-start; width: 100%; }
+.mm-md-item-body { gap: 2px; align-items: stretch; flex: 1 1 auto; min-width: 0; }
+.mm-md-marker {
+    flex: none; min-width: 20px; color: var(--mm-secondary); font-variant-numeric: tabular-nums;
+}
+.mm-md-indent-1 { padding-left: 24px; }
+.mm-md-indent-2 { padding-left: 48px; }
+.mm-md-indent-3 { padding-left: 72px; }
+.mm-md-pre {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em;
+    white-space: pre-wrap; overflow-wrap: anywhere; background: rgba(0, 0, 0, 0.045);
+    border-radius: 8px; padding: 10px 12px;
+}
+.mm-md-rule { margin: 4px 0; }
+.mm-passage-text.column, .mm-say.column { gap: 0; align-items: stretch; }
 .mm-hidden { display: none !important; }
 /* Images waiting to be sent, and images already sent. */
 .mm-tray { gap: 8px; padding: 8px 0 2px; }

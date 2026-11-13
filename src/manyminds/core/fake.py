@@ -65,9 +65,20 @@ Demo source B: https://example.org/demo/{slug}/b
   A second placeholder passage, this one pointing the other way."""
 
 NOTES = """\
-Demo notes. Here a real model would write up what it found before filing its report.
-One source supports the lead and one cuts against it.
-Neither settles the matter, and the report below says what remains unknown."""
+## Demo notes
+
+Here a real model would write up what it found. **Nothing below is real.**
+
+### Useful sources
+
+1. **Demo source A:** https://example.org/demo/a
+   **Passage:** "A placeholder passage that supports the lead."
+   **Relation to lead:** Supports it.
+2. **Demo source B:** [a second placeholder](https://example.org/demo/b)
+   **Relation to lead:** Cuts against it.
+
+- Neither settles the matter.
+- What remains unknown is listed as `could not be determined`."""
 TITLE_LENGTH = 40
 
 Sleep = Callable[[float], Awaitable[None]]

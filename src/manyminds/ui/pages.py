@@ -33,7 +33,7 @@ from manyminds.core.models import (
 )
 from manyminds.core.services import Services
 from manyminds.core.storage import NotFoundError
-from manyminds.ui import theme
+from manyminds.ui import markdown, theme
 from manyminds.ui.follow import Follower
 from manyminds.ui.report_view import report_view, usage_line
 
@@ -433,7 +433,8 @@ def check_page(
                         ui.label("What was read from your links").classes(theme.LABEL)
                         ui.label(message.body).classes("mm-read-text").mark("read")
                 elif message.body:
-                    ui.label(message.body).classes("mm-say").mark("reply")
+                    with ui.column().classes("mm-say"):
+                        markdown.show(message.body, mark="reply")
                 lead_group(message, opening)
 
         def show_new_steps(message: Message) -> None:
@@ -668,7 +669,12 @@ def _transcript_entry(event: JobEvent) -> None:
         heading = PASSAGE_HEADING[event.kind]
         if heading:
             ui.label(heading).classes("mm-passage-heading")
-        ui.label(event.detail).classes("mm-passage-text").mark("transcript-text")
+        if event.kind is JobEventKind.SOURCES_FOUND:
+            # A list of addresses from the search tool, not something a model wrote.
+            ui.label(event.detail).classes("mm-passage-text").mark("transcript-text")
+        else:
+            with ui.column().classes("mm-passage-text"):
+                markdown.show(event.detail, mark="transcript-text")
 
 
 def thread_page(services: Services, updates: Updates, check_id: str, thread_id: str) -> None:
