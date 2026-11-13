@@ -229,6 +229,25 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
     font-size: 14px; line-height: 1.6; color: #48484a; white-space: pre-wrap;
     overflow-wrap: anywhere;
 }
+.mm-hidden { display: none !important; }
+/* Images waiting to be sent, and images already sent. */
+.mm-tray { gap: 8px; padding: 8px 0 2px; }
+.mm-chip {
+    align-items: center; gap: 8px; flex-wrap: nowrap; padding: 4px 6px 4px 4px;
+    background: var(--mm-surface); border-radius: 10px; max-width: 240px;
+}
+.mm-chip-thumb { width: 36px; height: 36px; border-radius: 7px; flex: none; }
+.mm-chip-name {
+    font-size: 13px; color: var(--mm-secondary); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mm-attached {
+    width: 280px; max-width: 84%; border-radius: 14px; border: 1px solid var(--mm-hairline);
+}
+.mm-read-as {
+    font-size: 13px; line-height: 1.5; color: var(--mm-secondary); max-width: 84%;
+    text-align: right; overflow-wrap: anywhere;
+}
 .mm-pending { align-items: center; gap: 10px; }
 .mm-steps { gap: 8px; align-items: stretch; }
 .mm-steps:empty { display: none; }

@@ -86,6 +86,8 @@ class ModelClient(Protocol):
         on_progress: ProgressCallback | None = None,
     ) -> Decomposition: ...
 
+    async def describe_image(self, media_type: str, data: bytes, *, model: str) -> str: ...
+
     async def converse(
         self,
         message: str,

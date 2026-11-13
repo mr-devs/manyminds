@@ -10,8 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from manyminds.core.models import (
+    Attachment,
     Check,
     ErrorKind,
+    ImageFile,
     Job,
     JobEvent,
     JobEventKind,
@@ -27,6 +29,7 @@ from manyminds.core.models import (
     SearchEngine,
     Thread,
     Usage,
+    as_read,
 )
 
 # Each entry moves the schema forward by one version. Never edit an entry that has shipped;
@@ -123,6 +126,16 @@ MIGRATIONS: Sequence[str] = (
         detail TEXT NOT NULL,
         created_at TEXT NOT NULL,
         PRIMARY KEY (message_id, seq)
+    );
+    """,
+    """
+    CREATE TABLE attachments (
+        id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        media_type TEXT NOT NULL,
+        data BLOB NOT NULL,
+        description TEXT
     );
     """,
 )
@@ -245,7 +258,14 @@ class Store:
                 self._insert_lead(db, check_id, text, LeadOrigin.GENERATED, reply_id)
         return self.get_check(check_id)
 
-    def open_check(self, *, title: str, source_text: str, instructions: str = "") -> Message:
+    def open_check(
+        self,
+        *,
+        title: str,
+        source_text: str,
+        instructions: str = "",
+        images: Sequence[ImageFile] = (),
+    ) -> Message:
         """Save a check with the message that opened it and a reply still to come. Returns
         that reply."""
         check_id, stamp = uuid.uuid4().hex, self._stamp()
@@ -255,9 +275,10 @@ class Store:
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (check_id, title, source_text, instructions, stamp, stamp),
             )
-            self._insert_message(
+            said_id = self._insert_message(
                 db, check_id, MessageRole.USER, MessageStatus.COMPLETE, source_text
             )
+            self._insert_attachments(db, said_id, images)
             reply_id = self._insert_message(
                 db, check_id, MessageRole.ASSISTANT, MessageStatus.PENDING, ""
             )
@@ -562,20 +583,48 @@ class Store:
         rows = self._all("SELECT * FROM messages WHERE check_id = ? ORDER BY seq", (check_id,))
         return [Message.model_validate(dict(row)) for row in rows]
 
+    # -- images -----------------------------------------------------------------------
+
+    def _insert_attachments(
+        self, db: sqlite3.Connection, message_id: str, images: Sequence[ImageFile]
+    ) -> None:
+        for position, image in enumerate(images):
+            db.execute(
+                "INSERT INTO attachments (id, message_id, position, media_type, data) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (uuid.uuid4().hex, message_id, position, image.media_type, image.data),
+            )
+
+    def list_attachments(self, message_id: str) -> list[Attachment]:
+        rows = self._all(
+            "SELECT * FROM attachments WHERE message_id = ? ORDER BY position", (message_id,)
+        )
+        return [Attachment.model_validate(dict(row)) for row in rows]
+
+    def describe_attachment(self, attachment_id: str, description: str) -> None:
+        self._write(
+            "UPDATE attachments SET description = ? WHERE id = ?", (description, attachment_id)
+        )
+
+    def message_as_read(self, message: Message) -> str:
+        """A message's words together with what its attached images were taken to show."""
+        descriptions = [image.description for image in self.list_attachments(message.id)]
+        return as_read(message.body, descriptions)
+
     def source_for_lead(self, lead_id: str) -> str:
         """What the user had said when a lead was put forward: every message of theirs up to
         the reply the lead is listed under. For a lead under the opening reply, and for one
         under no reply, that is the text the check began with."""
         lead = self.get_lead(lead_id)
         rows = self._all(
-            "SELECT said.body FROM messages AS said JOIN messages AS reply "
+            "SELECT said.* FROM messages AS said JOIN messages AS reply "
             "ON reply.check_id = said.check_id AND said.seq < reply.seq "
             "WHERE reply.id = ? AND said.role = ? ORDER BY said.seq",
             (lead.message_id, MessageRole.USER),
         )
         if not rows:
             return self.get_check(lead.check_id).source_text
-        said = "\n\n".join(row["body"] for row in rows)
+        said = "\n\n".join(self.message_as_read(Message.model_validate(dict(row))) for row in rows)
         # The opening reply holds what was read from the links in the first message.
         opening = self._all(
             "SELECT body FROM messages WHERE check_id = ? AND seq = 2 AND role = ?",
@@ -585,10 +634,14 @@ class Store:
             said += f"\n\n{READ_FROM_LINKS}\n{opening[0]['body']}"
         return said
 
-    def begin_turn(self, check_id: str, body: str) -> Message:
-        """Save what the user said and a reply that is still to come. Returns that reply."""
+    def begin_turn(self, check_id: str, body: str, images: Sequence[ImageFile] = ()) -> Message:
+        """Save what the user said, with any images, and a reply that is still to come.
+        Returns that reply."""
         with self._transaction() as db:
-            self._insert_message(db, check_id, MessageRole.USER, MessageStatus.COMPLETE, body)
+            said_id = self._insert_message(
+                db, check_id, MessageRole.USER, MessageStatus.COMPLETE, body
+            )
+            self._insert_attachments(db, said_id, images)
             reply_id = self._insert_message(
                 db, check_id, MessageRole.ASSISTANT, MessageStatus.PENDING, ""
             )

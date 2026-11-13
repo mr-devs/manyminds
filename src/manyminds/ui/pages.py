@@ -1,18 +1,26 @@
 """The pages. Each one reads from the core and re-reads when the core announces a change."""
 
+import base64
 import logging
 from collections.abc import Callable
 
 from nicegui import Event, ui
-from nicegui.events import ScrollEventArguments, ValueChangeEventArguments
+from nicegui.events import (
+    ScrollEventArguments,
+    UploadEventArguments,
+    ValueChangeEventArguments,
+)
 
 from manyminds.core.checks import (
+    IMAGE_TYPES,
     ChatBusyError,
     NothingToLaunchError,
     TooManyLeadsError,
+    check_images,
 )
 from manyminds.core.events import ChatUpdated, JobUpdated, Update
 from manyminds.core.models import (
+    ImageFile,
     JobEvent,
     JobEventKind,
     Lead,
@@ -73,40 +81,146 @@ def _follow_scroll(follower: Follower, classes: str) -> ui.scroll_area:
     return area
 
 
+def _data_url(media_type: str, data: bytes) -> str:
+    """An image as an address the browser can show without fetching anything."""
+    return f"data:{media_type};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+class _ImageTray:
+    """Images waiting to go with the next message: picked with the attach button or pasted.
+
+    The browser hands every image, however it arrived, to one hidden uploader, which sends
+    it here. File names come from the user's computer and are shown as plain text.
+    """
+
+    def __init__(self, problem: Callable[[str], None]) -> None:
+        self._waiting: list[tuple[str, ImageFile]] = []
+        self._problem = problem
+        self._shown = ui.refreshable(self._show)
+        self._shown()
+        self._uploader = (
+            ui.upload(
+                on_upload=self._received,
+                on_rejected=lambda: problem("That file could not be attached."),
+                multiple=True,
+                auto_upload=True,
+            )
+            .props(f'accept="{",".join(IMAGE_TYPES)}"')
+            .classes("mm-hidden")
+        )
+
+    def _show(self) -> None:
+        if not self._waiting:
+            return
+        with ui.row().classes("mm-tray"):
+            for index, (name, image) in enumerate(self._waiting):
+                with ui.row().classes("mm-chip").mark(f"attachment-{index}"):
+                    ui.image(_data_url(image.media_type, image.data)).classes("mm-chip-thumb")
+                    ui.label(name or "Pasted image").classes("mm-chip-name")
+                    (
+                        ui.button(icon="close", on_click=lambda index=index: self._remove(index))
+                        .props('flat round dense size=xs aria-label="Remove image"')
+                        .classes("mm-icon")
+                        .mark(f"remove-attachment-{index}")
+                    )
+
+    async def _received(self, event: UploadEventArguments) -> None:
+        image = ImageFile(event.file.content_type, await event.file.read())
+        self._uploader.reset()
+        try:
+            check_images([*self.images(), image])
+        except ValueError as error:
+            self._problem(str(error))
+            return
+        self._waiting.append((event.file.name, image))
+        self._shown.refresh()
+
+    def _remove(self, index: int) -> None:
+        del self._waiting[index]
+        self._shown.refresh()
+
+    def images(self) -> list[ImageFile]:
+        return [image for _, image in self._waiting]
+
+    def take(self) -> list[tuple[str, ImageFile]]:
+        """Hand over the waiting images and empty the tray."""
+        taken, self._waiting = self._waiting, []
+        self._shown.refresh()
+        return taken
+
+    def put_back(self, taken: list[tuple[str, ImageFile]]) -> None:
+        self._waiting = taken + self._waiting
+        self._shown.refresh()
+
+    def attach_button(self) -> None:
+        """A button that opens the file picker. It runs in the browser, which only lets a
+        page open the picker in direct answer to a click."""
+        with (
+            ui.button(icon="attach_file")
+            .on("click", js_handler=f"() => getElement({self._uploader.id}).$refs.qRef.pickFiles()")
+            .props('flat round dense aria-label="Attach an image"')
+            .classes("mm-icon")
+        ):
+            ui.tooltip("Attach an image")
+
+    def take_pasted_images(self, box: ui.textarea) -> None:
+        """Send images pasted into the box, such as a screenshot, to the tray. Pasted text
+        is left alone."""
+        box.on(
+            "paste",
+            js_handler=(
+                "(event) => { const files = Array.from(event.clipboardData?.files || [])"
+                ".filter((file) => file.type.startsWith('image/')); if (files.length) {"
+                f" event.preventDefault(); getElement({self._uploader.id}).$refs.qRef"
+                ".addFiles(files); } }"
+            ),
+        )
+
+
 # -- home ---------------------------------------------------------------------------------
 
 
 def home_page(services: Services, checks_changed: Callable[[], object]) -> None:
     with theme.content(home=True):
         ui.label("What would you like to check?").classes(theme.HEADLINE)
-        with ui.column().classes("mm-composer"):
-            composer = (
-                ui.textarea(
-                    placeholder="Paste a claim, a post or a link, and say what you want checked"
-                )
-                .props("borderless autogrow")
-                .classes("w-full mm-field")
-                .mark("composer")
-            )
-            with ui.row().classes("mm-composer-foot items-center justify-end no-wrap gap-3"):
-                button = ui.button("Generate leads").props("unelevated no-caps")
-                button.classes(theme.BUTTON)
         problem = ui.label().classes(theme.ERROR + " text-center")
         problem.set_visibility(False)
-        if services.notice:
-            ui.label(services.notice).classes(theme.MUTED + " text-center").mark("notice")
 
         def show_problem(message: str) -> None:
             problem.set_text(message)
             problem.set_visibility(True)
 
+        with ui.column().classes("mm-composer"):
+            tray = _ImageTray(show_problem)
+            composer = (
+                ui.textarea(
+                    placeholder="Paste a claim, a post, a link or a screenshot, and say what "
+                    "you want checked"
+                )
+                .props("borderless autogrow")
+                .classes("w-full mm-field")
+                .mark("composer")
+            )
+            tray.take_pasted_images(composer)
+            with ui.row().classes("mm-composer-foot items-center no-wrap gap-3"):
+                tray.attach_button()
+                ui.space()
+                button = ui.button("Generate leads").props("unelevated no-caps")
+                button.classes(theme.BUTTON)
+        problem.move(target_index=-1)
+        if services.notice:
+            ui.label(services.notice).classes(theme.MUTED + " text-center").mark("notice")
+
         def generate() -> None:
             text = composer.value or ""
-            if not text.strip():
+            if not text.strip() and not tray.images():
                 show_problem("Paste some text first.")
                 return
             try:
-                check = services.checks.start_check(text)
+                check = services.checks.start_check(text, images=tray.images())
+            except ValueError as error:
+                show_problem(str(error))
+                return
             except Exception as error:
                 logger.error("Creating a check failed: %s", type(error).__name__)
                 show_problem("Something went wrong and nothing was saved. Please try again.")
@@ -172,7 +286,7 @@ def check_page(
         status_labels: dict[str, ui.label] = {}
         groups: dict[str, Callable[[], object]] = {}
         """How to redraw the leads under each reply, by the reply's id."""
-        drawn: dict[str, tuple[ui.element, MessageStatus]] = {}
+        drawn: dict[str, tuple[ui.element, object]] = {}
         """Each message already on the page, and the state it was drawn in."""
         working: dict[str, tuple[ui.element, int]] = {}
         """For each reply still being worked out: where its steps go, and the last one shown."""
@@ -280,7 +394,13 @@ def check_page(
 
         def draw(message: Message, opening: bool) -> None:
             if message.role is MessageRole.USER:
-                ui.label(message.body).classes("mm-bubble").mark("user-message")
+                for image in store.list_attachments(message.id):
+                    ui.image(_data_url(image.media_type, image.data)).classes("mm-attached")
+                    if image.description:
+                        # Shown so the user can see, and correct, how the image was read.
+                        ui.label(f"Read as: {image.description}").classes("mm-read-as")
+                if message.body:
+                    ui.label(message.body).classes("mm-bubble").mark("user-message")
             elif message.status is MessageStatus.PENDING:
                 steps = ui.column().classes("mm-steps")
                 working[message.id] = (steps, 0)
@@ -328,7 +448,12 @@ def check_page(
             for message in store.list_messages(check_id):
                 is_reply = message.role is MessageRole.ASSISTANT
                 known = drawn.get(message.id)
-                if known is None or known[1] is not message.status:
+                # A message is redrawn when its status changes or one of its images is read.
+                state = (
+                    message.status,
+                    tuple(image.description for image in store.list_attachments(message.id)),
+                )
+                if known is None or known[1] != state:
                     slot: ui.element
                     if known is None:
                         with stream:
@@ -340,7 +465,7 @@ def check_page(
                     groups.pop(message.id, None)
                     with slot:
                         draw(message, opening and is_reply)
-                    drawn[message.id] = (slot, message.status)
+                    drawn[message.id] = (slot, state)
                 if message.id in working:
                     show_new_steps(message)
                 if is_reply:
@@ -352,13 +477,16 @@ def check_page(
         notice.set_visibility(False)
 
         with ui.column().classes("mm-composer mm-chat-composer"):
+            tray = _ImageTray(tell)
             composer = (
                 ui.textarea(placeholder="Ask about the research, or paste something else to check")
                 .props("borderless autogrow rows=1")
                 .classes("w-full mm-field")
                 .mark("composer")
             )
+            tray.take_pasted_images(composer)
             with ui.row().classes("mm-composer-foot items-center no-wrap gap-3"):
+                tray.attach_button()
                 ui.label("Research with").classes("mm-launch-label")
                 (
                     ui.select(
@@ -375,24 +503,31 @@ def check_page(
 
         async def send() -> None:
             text = composer.value or ""
-            if not text.strip():
+            if not text.strip() and not tray.images():
                 tell("Write a message first.")
                 return
             notice.set_visibility(False)
             composer.set_value("")
+            taken = tray.take()
             # Sending brings the view back to the end, wherever it had been scrolled to.
             follower.following = True
-            try:
-                await services.checks.send(check_id, text)
-            except ChatBusyError as error:
+
+            def give_back(message: str) -> None:
                 composer.set_value(text)
-                tell(str(error))
+                tray.put_back(taken)
+                tell(message)
+
+            try:
+                await services.checks.send(check_id, text, [image for _, image in taken])
+            except ChatBusyError as error:
+                give_back(str(error))
             except NotFoundError:
                 tell("This check no longer exists.")
+            except ValueError as error:
+                give_back(str(error))
             except Exception as error:
                 logger.error("Sending a message failed: %s", type(error).__name__)
-                composer.set_value(text)
-                tell("The message could not be sent. Nothing was changed.")
+                give_back("The message could not be sent. Nothing was changed.")
 
         send_button.on_click(send)
         composer.on(SEND_KEY, send, js_handler=SEND_UNLESS_COMPOSING)

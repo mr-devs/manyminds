@@ -1,6 +1,7 @@
 """ModelClient backed by OpenRouter's Responses API."""
 
 import asyncio
+import base64
 import json
 import math
 from collections.abc import Callable, Sequence
@@ -306,7 +307,15 @@ class OpenRouterModelClient:
         found = [page for page in _fetched(final) if page.content is not None]
         return found[: prompts.MAX_LINKED_PAGES]
 
-    async def _look(self, url: str, model: str, tally: _Tally) -> str | None:
+    async def describe_image(self, media_type: str, data: bytes, *, model: str) -> str:
+        """Say what an image the user attached shows. The image itself is sent."""
+        encoded = base64.b64encode(data).decode("ascii")
+        described = await self._look(f"data:{media_type};base64,{encoded}", model, _Tally(), True)
+        if described is None:
+            raise ModelError(ErrorKind.INVALID_OUTPUT, "The model said nothing about the image.")
+        return described
+
+    async def _look(self, url: str, model: str, tally: _Tally, strict: bool = False) -> str | None:
         """A description of one image, or None if the model could not be shown it."""
         body = {
             "model": model,
@@ -324,6 +333,8 @@ class OpenRouterModelClient:
         try:
             described = _text(await self._run(body, tally)).strip()
         except ModelError:
+            if strict:
+                raise
             return None
         return described[: prompts.MAX_IMAGE_DESCRIPTION_CHARS] or None
 

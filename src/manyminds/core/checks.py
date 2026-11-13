@@ -9,7 +9,9 @@ from manyminds.core.jobs import JobManager
 from manyminds.core.models import (
     Check,
     ErrorKind,
+    ImageFile,
     Job,
+    JobEventKind,
     JobStatus,
     Lead,
     LeadOrigin,
@@ -40,6 +42,12 @@ logger = logging.getLogger(__name__)
 INITIAL_LEADS = 5
 MAX_LEADS = 25
 """The most leads waiting in one list. Launched leads no longer count."""
+MAX_IMAGES = 4
+"""The most images attached to one message."""
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+IMAGE_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif")
+IMAGE_TYPES_PROBLEM = "Only PNG, JPEG, WebP and GIF images can be attached."
+TOO_MANY_IMAGES = f"Attach at most {MAX_IMAGES} images to a message."
 TITLE_LENGTH = 60
 MAX_TITLE_LENGTH = 120
 
@@ -81,6 +89,19 @@ def _unique_leads(leads: Sequence[str], limit: int, existing: Sequence[str] = ()
     return kept[:limit]
 
 
+def check_images(images: Sequence[ImageFile]) -> None:
+    """Raise ValueError, with a reason fit to show, if these images cannot be attached."""
+    if len(images) > MAX_IMAGES:
+        raise ValueError(TOO_MANY_IMAGES)
+    for image in images:
+        if image.media_type not in IMAGE_TYPES:
+            raise ValueError(IMAGE_TYPES_PROBLEM)
+        if not image.data:
+            raise ValueError("An attached image is empty.")
+        if len(image.data) > MAX_IMAGE_BYTES:
+            raise ValueError("An image can be 5 MB at most.")
+
+
 def summarise(jobs: Sequence[Job]) -> ThreadStatus:
     statuses = {job.status for job in jobs}
     if JobStatus.RUNNING in statuses:
@@ -114,19 +135,23 @@ class CheckService:
         """Checks with a reply being written right now."""
         self._search_engine = search_engine
 
-    def start_check(self, text: str, instructions: str = "") -> Check:
+    def start_check(
+        self, text: str, instructions: str = "", images: Sequence[ImageFile] = ()
+    ) -> Check:
         """Save a check at once and work out its leads in the background.
 
         The check opens with the user's message and a reply still to come. Each step taken
         is saved under that reply and announced, so the work can be watched.
         """
-        reply = self._open(text, instructions)
+        reply = self._open(text, instructions, images)
         self.jobs.spawn(self._settle(reply.check_id, reply, self._opening(reply, instructions)))
         return self.store.get_check(reply.check_id)
 
-    async def create_check(self, text: str, instructions: str = "") -> Check:
+    async def create_check(
+        self, text: str, instructions: str = "", images: Sequence[ImageFile] = ()
+    ) -> Check:
         """Generate leads for a pasted text and wait for them. Nothing is kept on failure."""
-        reply = self._open(text, instructions)
+        reply = self._open(text, instructions, images)
         try:
             await self._opening(reply, instructions)
         except BaseException:
@@ -150,23 +175,44 @@ class CheckService:
         self._bus.publish(ChatUpdated(check_id=check_id))
         self.jobs.spawn(self._settle(check_id, reply, self._opening(reply, check.instructions)))
 
-    def _open(self, text: str, instructions: str) -> Message:
-        if not text.strip():
+    def _open(self, text: str, instructions: str, images: Sequence[ImageFile]) -> Message:
+        if not text.strip() and not images:
             raise ValueError("The text to check is empty")
+        check_images(images)
         return self.store.open_check(
-            title=_squash(text)[:TITLE_LENGTH], source_text=text, instructions=instructions
+            title=_squash(text)[:TITLE_LENGTH] or "Image",
+            source_text=text,
+            instructions=instructions,
+            images=images,
         )
+
+    async def _understood(self, said: Message, record: ProgressCallback) -> str:
+        """What the user said, with what each attached image shows. Images not yet looked at
+        are shown to the model now; one that cannot be is said to be so, and work goes on."""
+        for number, image in enumerate(self.store.list_attachments(said.id), start=1):
+            if image.description is not None:
+                continue
+            record(Progress(JobEventKind.NOTE, f"Looking at attached image {number}"))
+            try:
+                description = await self._model.describe_image(
+                    image.media_type, image.data, model=self._decompose_model
+                )
+            except ModelError:
+                continue
+            self.store.describe_attachment(image.id, description)
+        return self.store.message_as_read(said)
 
     async def _opening(self, reply: Message, instructions: str) -> Message:
         """Work out the leads for a check and fill in its opening reply."""
-        check = self.store.get_check(reply.check_id)
+        record = self._recorder(reply)
+        said = self.store.list_messages(reply.check_id)[0]
         decomposition = await self._model.decompose(
-            check.source_text,
+            await self._understood(said, record),
             instructions,
             count=INITIAL_LEADS,
             avoid=[],
             model=self._decompose_model,
-            on_progress=self._recorder(reply),
+            on_progress=record,
         )
         leads = _unique_leads(decomposition.leads, INITIAL_LEADS)
         if not leads:
@@ -266,21 +312,22 @@ class CheckService:
             self.jobs.start(job.id)
         return thread
 
-    async def send(self, check_id: str, text: str) -> Message:
+    async def send(self, check_id: str, text: str, images: Sequence[ImageFile] = ()) -> Message:
         """Add the user's message to the conversation and return the model's reply.
 
         Both are saved. A reply that could not be written is saved as failed, with the
         reason. Leads the reply proposes are saved as drafts; nothing is started.
         """
         body = text.strip()
-        if not body:
+        if not body and not images:
             raise ValueError("Write a message first.")
+        check_images(images)
         self.store.get_check(check_id)
         if check_id in self._replying:
             raise ChatBusyError("Wait for the reply before sending another message.")
         context = self._chat_context(check_id, self.store.list_messages(check_id))
-        reply = self.store.begin_turn(check_id, body)
-        return await self._settle(check_id, reply, self._reply(reply, body, context))
+        reply = self.store.begin_turn(check_id, body, images)
+        return await self._settle(check_id, reply, self._reply(reply, context))
 
     async def _settle(self, check_id: str, reply: Message, work: Awaitable[Message]) -> Message:
         """See a reply through: run the work that fills it in, or save why there is none.
@@ -314,14 +361,20 @@ class CheckService:
             self._replying.discard(check_id)
             self._bus.publish(ChatUpdated(check_id=check_id))
 
-    async def _reply(self, reply: Message, body: str, context: ChatContext) -> Message:
+    async def _reply(self, reply: Message, context: ChatContext) -> Message:
         check_id = reply.check_id
+        record = self._recorder(reply)
+        asked = next(
+            message
+            for message in self.store.list_messages(check_id)
+            if message.seq == reply.seq - 1
+        )
         answer = await self._model.converse(
-            body,
+            await self._understood(asked, record),
             context,
             model=self._chat_model,
             search=self._search_engine,
-            on_progress=self._recorder(reply),
+            on_progress=record,
         )
         room = MAX_LEADS - len(self.store.list_draft_leads(check_id))
         leads = _unique_leads(
@@ -334,9 +387,10 @@ class CheckService:
 
     def _chat_context(self, check_id: str, messages: Sequence[Message]) -> ChatContext:
         turns = tuple(
-            PastTurn(message.role, message.body)
+            PastTurn(message.role, said)
             for message in messages
-            if message.status is MessageStatus.COMPLETE and message.body
+            if message.status is MessageStatus.COMPLETE
+            and (said := self.store.message_as_read(message))
         )
         threads = {thread.lead_id: thread for thread in self.store.list_threads(check_id)}
         notes = []

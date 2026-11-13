@@ -1,5 +1,7 @@
 """Domain models."""
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated
@@ -204,6 +206,42 @@ class JobEvent(_Record):
     kind: JobEventKind
     detail: str
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class ImageFile:
+    """An image the user attached, as it arrived."""
+
+    media_type: str
+    data: bytes
+
+
+class Attachment(_Record):
+    """An image kept with the message it was attached to."""
+
+    id: str
+    message_id: str
+    position: int
+    media_type: str
+    data: bytes
+    description: str | None
+    """What a model said the image shows. None until it has been looked at, or if it could
+    not be."""
+
+
+def as_read(body: str, descriptions: Sequence[str | None]) -> str:
+    """A message as the models are given it: its words, then what each attached image was
+    taken to show. A description is a model's reading, and is labelled as one."""
+    parts = [body] if body.strip() else []
+    for number, description in enumerate(descriptions, start=1):
+        if description is None:
+            parts.append(f"[Attached image {number} could not be looked at.]")
+        else:
+            parts.append(
+                f"[Attached image {number}, as described by a model that looked at it (the "
+                f"description may be wrong): {description}]"
+            )
+    return "\n\n".join(parts)
 
 
 class MessageStep(_Record):

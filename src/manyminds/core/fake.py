@@ -106,6 +106,10 @@ class FakeModelClient:
         fresh = [lead for lead in LEADS if lead not in set(avoid)]
         return Decomposition(title=_title(text), leads=fresh[:count])
 
+    async def describe_image(self, media_type: str, data: bytes, *, model: str) -> str:
+        await self._sleep(0.6)
+        return "Demo description. A real model would say here what the attached image shows."
+
     async def converse(
         self,
         message: str,
