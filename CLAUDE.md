@@ -44,7 +44,9 @@ merge through a pull request.
     requests (decision 18). The conversation may search before it replies (decision 20);
     calls that produce structured output never have tools.
   - Show model text as plain text only (`ui.label`, `ui.input`, `ui.link`): never `ui.html`,
-    `ui.markdown`, `.props()` or JavaScript. Links are http or https only.
+    `ui.markdown`, `.props()` or JavaScript. Links are http or https only. Markdown a model
+    writes is formatted by the app's own reader, `ui/markdown.py`, which builds those same
+    plain elements and leaves anything it does not recognise, HTML included, as text.
   - Bind to `127.0.0.1` only, with `reload=False`.
 - Prefer few, well-maintained dependencies. Ask the owner before adding one.
 - If documentation contradicts the plan, say so and propose a correction. Do not work around it

@@ -532,6 +532,9 @@ milestones 8 and 9 in a different shape.
 - The conversation may search the web before it replies (decision 20).
 - Images can be pasted into the box or attached with a button, are kept with the message,
   and are described by the model before leads or a reply are written (decision 21).
+- Markdown in an agent's thinking and notes, and in chat replies, is formatted by the app's
+  own reader (`ui/markdown.py`): headings, bold, italic, code, lists and web links. It builds
+  plain text elements only; images are never loaded and other markup stays as text.
 - **Not done:** recording the cost of chat replies; retrying a failed reply with one press
   (send the message again); choosing the chat model (it is the lead-generation model);
   "Generate more leads" as a button (ask for more in the chat).
