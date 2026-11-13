@@ -46,6 +46,7 @@ async def test_an_image_alone_can_be_sent_from_the_home_page(
     await user.open("/")
 
     await attach(user, "shot.png", "image/png", PNG)
+    await user.should_see(marker="attachment-0")  # the upload is handled in the background
     user.find("Generate leads").click()
 
     await user.should_see(marker="lead-list")
@@ -82,6 +83,7 @@ async def test_a_fifth_image_is_refused(user: User) -> None:
     await user.open("/")
     for n in range(4):
         await attach(user, f"{n}.png", "image/png", PNG)
+        await user.should_see(marker=f"attachment-{n}")
 
     await attach(user, "4.png", "image/png", PNG)
 
