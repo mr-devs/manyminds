@@ -288,7 +288,10 @@ async def test_a_reply_with_markup_is_shown_as_plain_text(
 
     await say(user, "Summarise.")
 
-    await user.should_see(kind=ui.label, content=model.reply)
+    await user.should_see(kind=ui.label, content="<script>alert(1)</script> ")
+    await user.should_see(kind=ui.label, content="[x](javascript:alert(1))")
+    with user:
+        assert [link.text for link in ElementFilter(kind=ui.link) if link.text == "x"] == []
     await user.should_see(kind=ui.textarea, content="<img src=x onerror=alert(1)> lead")
     with user:
         assert list(ElementFilter(kind=ui.html)) == []

@@ -161,7 +161,10 @@ async def test_transcript_text_is_shown_as_plain_text(user: User, model: Recordi
     user.find(marker="thread-row-1").click()
     await user.should_see("Report ready")
 
-    assert transcript_texts(user).count(hostile) == 3
+    # Thinking and notes are formatted, so the image syntax becomes a link; the markup that
+    # comes before it is still shown as the text it is.
+    markup = '<img src=x onerror="alert(1)">'
+    assert len([text for text in transcript_texts(user) if markup in text]) == 3
     with user:
         assert list(ElementFilter(kind=ui.html)) == []
         assert list(ElementFilter(kind=ui.markdown)) == []
