@@ -14,6 +14,7 @@ from nicegui import ui
 PARAGRAPH = "paragraph"
 HEADING = "heading"
 ITEM = "item"
+QUOTE = "quote"
 CODE = "code"
 RULE = "rule"
 
@@ -47,7 +48,7 @@ class Block:
     marker: str = ""
     """For a list item: a bullet, or its number."""
     indent: int = 0
-    """For a list item, how deeply it is nested."""
+    """How deeply a list item is nested, or how far other text sits under a list item."""
 
 
 _INLINE = re.compile(
@@ -126,6 +127,8 @@ def parse(text: str) -> list[Block]:
     """Read markdown into blocks. Never fails: what is not understood is kept as text."""
     blocks: list[Block] = []
     open_block: Block | None = None
+    under: int | None = None
+    """While inside a list item, the depth at which text belonging to that item sits."""
     lines = text.split("\n")
     index = 0
     while index < len(lines):
@@ -147,16 +150,32 @@ def parse(text: str) -> list[Block]:
         elif heading := _HEADING.match(line):
             blocks.append(Block(HEADING, level=len(heading[1]), lines=[_runs(heading[2])]))
             open_block = None
+            under = None
         elif item := _ITEM.match(line):
             depth = min((len(item[1].expandtabs(4)) + 1) // 3, MAX_INDENT)
             marker = "•" if item[2] else f"{item[3]}."
             open_block = Block(ITEM, marker=marker, indent=depth, lines=[_runs(item[4])])
             blocks.append(open_block)
-        elif open_block is not None and (open_block.kind == PARAGRAPH or line[:1].isspace()):
-            open_block.lines.append(_runs(line.strip()))
+            under = depth + 1
         else:
-            open_block = Block(PARAGRAPH, lines=[_runs(line.strip())])
-            blocks.append(open_block)
+            indented = line[:1].isspace()
+            if not indented:
+                under = None if open_block is None or open_block.kind != PARAGRAPH else under
+            depth = under if indented and under is not None else 0
+            text_of_line = line.strip()
+            quoted = text_of_line.startswith(">")
+            kind = QUOTE if quoted else PARAGRAPH
+            if quoted:
+                text_of_line = text_of_line.lstrip(">").strip()
+            continues = open_block is not None and (
+                (open_block.kind == kind and open_block.indent == depth)
+                or (open_block.kind == ITEM and indented and not quoted)
+            )
+            if continues and open_block is not None:
+                open_block.lines.append(_runs(text_of_line))
+            else:
+                open_block = Block(kind, indent=depth, lines=[_runs(text_of_line)])
+                blocks.append(open_block)
     return blocks
 
 
@@ -208,5 +227,9 @@ def show(text: str, *, mark: str | None = None) -> None:
                     code.mark(mark)
             elif block.kind == RULE:
                 ui.separator().classes("mm-md-rule")
+            elif block.kind == QUOTE:
+                with ui.column().classes(f"mm-md-quote mm-md-indent-{block.indent}"):
+                    _show_lines(block.lines, mark)
             else:
-                _show_lines(block.lines, mark)
+                with ui.column().classes(f"mm-md-under mm-md-indent-{block.indent}"):
+                    _show_lines(block.lines, mark)

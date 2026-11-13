@@ -258,6 +258,17 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
     border-radius: 8px; padding: 10px 12px;
 }
 .mm-md-rule { margin: 4px 0; }
+.mm-md-under, .mm-md-quote { gap: 2px; align-items: stretch; }
+.mm-md-quote {
+    border-left: 3px solid var(--mm-hairline); margin-left: 2px; padding: 2px 0 2px 14px;
+    color: #3a3a3c;
+}
+.mm-md-quote.mm-md-indent-1 { margin-left: 30px; padding-left: 14px; }
+.mm-md-quote.mm-md-indent-2 { margin-left: 54px; padding-left: 14px; }
+.mm-md-quote.mm-md-indent-3 { margin-left: 78px; padding-left: 14px; }
+.mm-md-under.mm-md-indent-1 { padding-left: 28px; }
+.mm-md-under.mm-md-indent-2 { padding-left: 52px; }
+.mm-md-under.mm-md-indent-3 { padding-left: 76px; }
 .mm-passage-text.column, .mm-say.column { gap: 0; align-items: stretch; }
 /* A research thread handing back to the main conversation. */
 .mm-handback.q-expansion-item {
