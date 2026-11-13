@@ -74,7 +74,8 @@ Sleep = Callable[[float], Awaitable[None]]
 
 
 def _title(text: str) -> str:
-    squashed = " ".join(text.split())
+    # What the user wrote, without the notes on attached images that follow it.
+    squashed = " ".join(text.split("[Attached image")[0].split()) or "an image"
     if len(squashed) > TITLE_LENGTH:
         squashed = squashed[:TITLE_LENGTH].rsplit(" ", 1)[0] + "…"
     return f"Demo: {squashed}"
