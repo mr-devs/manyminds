@@ -108,7 +108,7 @@ async def test_research_reports_progress_as_it_goes(fake: FakeModelClient) -> No
     assert searching.detail == "When did the bridge open?"
     assert thinking.detail.startswith("Demo thinking")
     assert "https://example.org/demo/" in sources.detail
-    assert message.detail.startswith("Demo notes")
+    assert message.detail.startswith("## Demo notes")
     # Long enough that a transcript of them has to scroll.
     assert all(len(entry.detail.splitlines()) >= 3 for entry in (thinking, sources, message))
 
