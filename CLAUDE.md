@@ -31,9 +31,10 @@ merge through a pull request.
   cases and subscribes to events. Keep logic out of the UI.
 - Only `core/openrouter/` talks to OpenRouter. Only `core/openrouter/websearch.py` knows the
   shapes of the `openrouter:web_search` and `openrouter:web_fetch` tools. Everything else uses the `ModelClient` protocol.
-- **Reports have no verdict, rating or confidence.** They are a neutral summary, evidence items
-  (URL, quoted passage, supports or undermines), and what could not be determined. The app
-  helps the user investigate; it never rules on what is true.
+- **No verdict, rating or confidence, anywhere.** A thread hands back its findings as its own
+  notes (sources with URLs and quoted passages, and what it could not find out); the
+  conversation writes one report from them (decision 22). Every prompt forbids a verdict. The
+  app helps the user investigate; it never rules on what is true.
 - **Security:**
   - The API key lives in the OS keychain. Never write it to files, logs, exceptions or the
     database. Never print it. Never commit secrets.

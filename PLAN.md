@@ -535,6 +535,9 @@ milestones 8 and 9 in a different shape.
 - Markdown in an agent's thinking and notes, and in chat replies, is formatted by the app's
   own reader (`ui/markdown.py`): headings, bold, italic, code, lists and web links. It builds
   plain text elements only; images are never loaded and other markup stays as text.
+- Research is one call; each thread hands its findings back into the conversation, and the
+  conversation writes one report when every started lead has finished (decision 22). Links
+  the search never returned are listed; quotes are no longer checked.
 - **Not done:** recording the cost of chat replies; retrying a failed reply with one press
   (send the message again); choosing the chat model (it is the lead-generation model);
   "Generate more leads" as a button (ask for more in the chat).

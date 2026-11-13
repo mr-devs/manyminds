@@ -1,7 +1,7 @@
 # manyminds
 
 **Status: early alpha.** The core loop works on real models: paste text, get leads, research
-them in parallel, read cited reports, ask about what was found, and come back to saved checks
+them in parallel, read their findings and one report on them all, ask about what was found, and come back to saved checks
 later. Settings and key storage are still to come. See
 [`PLAN.md`](https://github.com/mr-devs/manyminds/blob/main/PLAN.md) for what is done and what is
 next.
@@ -16,18 +16,21 @@ Each check is a conversation. You paste a piece of text or a link, with anything
 say about how to check it. The app replies with *leads*: specific threads that could be
 researched to see whether the text is supported by evidence. Press **Go** on the leads you
 care about, reword or remove others, or leave them. Each started lead gets its own research
-agent, which runs alongside the others and writes a focused report of quoted, linked
-evidence. Open any thread to see what its agent searched for and found.
+agent, which runs alongside the others. When an agent finishes, its findings appear in the
+conversation: sources with links and quoted passages, and what it could not find out. Once
+every lead you started has finished, the conversation writes a single report from all of
+them. Open any thread to see what its agent searched for and read.
 
 The conversation continues underneath. Ask it to summarise what the threads found or to
-suggest further leads. It answers from the finished reports first, and can run a quick web
+suggest further leads. It answers from the threads' findings first, and can run a quick web
 search of its own when they do not hold the answer; it says which is which. What it finds
-that way is not checked as strictly as a report's evidence, so start a lead for anything that
+that way has no check on its links, as a thread's findings do, so start a lead for anything that
 matters.
 
-manyminds gathers evidence for you to judge. It does not issue verdicts on what is true. Each
-piece of evidence links to its source, and is flagged when the link or the quote could not be
-matched to what the search actually returned.
+manyminds gathers evidence for you to judge. It does not issue verdicts on what is true.
+Findings link to their sources, and any link an agent wrote that its searches never returned
+is listed as such. Quotations are not checked against their sources, so read the source
+before relying on one.
 
 ## Where your text goes
 
@@ -76,7 +79,7 @@ uvx manyminds
 ```
 
 A lead costs roughly one to two US cents with the default model, most of it the web searches.
-The cost of each finished thread is shown under its report.
+The cost of each finished thread is shown under its findings.
 
 To look around with placeholder data, no key and no cost:
 
