@@ -120,31 +120,16 @@ def test_a_fetched_page_counts_as_a_source_with_its_text_as_the_passage() -> Non
 # -- research -------------------------------------------------------------------------------
 
 
-async def test_a_quote_from_a_page_the_agent_opened_is_grounded_and_checked() -> None:
+async def test_a_page_the_agent_opened_is_a_source_its_findings_may_link_to() -> None:
     search = stream_of(
-        search_item("council bridge vote", [VIDEO]),
+        search_item("council bridge vote"),
         fetch_item(VIDEO, "Council meeting", TRANSCRIPT),
-        message_item("Notes on the meeting."),
+        message_item(f"The council voted nine to two: {VIDEO}"),
     )
-    report = {
-        "summary": "A video of the meeting.",
-        "evidence": [
-            {
-                "url": VIDEO,
-                "title": "Council meeting",
-                "quote": "voted nine to two to close the Elm Street bridge",
-                "stance": "supports",
-            }
-        ],
-        "undetermined": "Nothing else.",
-    }
-    wire = Wire(search, json_reply(report))
 
-    result = await research(wire)
+    result = await research(Wire(search))
 
-    item = result.report.evidence[0]
-    assert (item.grounded, item.quote_matched) == (True, True)
-    assert "voted nine to two to close the Elm Street bridge" in wire.bodies[1]["input"]
+    assert result.report.unreturned_links == []
 
 
 async def test_opening_a_page_is_reported_as_progress() -> None:
@@ -285,16 +270,3 @@ async def test_a_linked_page_cannot_close_its_own_data_block() -> None:
 
     assert given.count("</linked_page>") == 1
     assert given.count("<linked_page ") == 1
-
-
-async def test_a_long_opened_page_is_shortened_before_the_report_is_written() -> None:
-    long_page = "word " * 30000
-    found = stream_of(
-        fetch_item("https://a.example/long", "Long", long_page), message_item("Notes on it.")
-    )
-    report = {"summary": "S", "evidence": [], "undetermined": "U"}
-    wire = Wire(found, json_reply(report))
-
-    await research(wire)
-
-    assert len(wire.bodies[1]["input"]) < 20000

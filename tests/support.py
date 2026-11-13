@@ -9,14 +9,7 @@ from typing import Any
 from nicegui import ElementFilter
 from nicegui.testing import User
 
-from manyminds.core.models import (
-    EvidenceItem,
-    JobEventKind,
-    Report,
-    SearchEngine,
-    Stance,
-    Usage,
-)
+from manyminds.core.models import JobEventKind, Report, SearchEngine, Usage
 from manyminds.core.ports import (
     ChatContext,
     ChatReply,
@@ -45,19 +38,7 @@ def start_all(user: User) -> None:
 
 
 def report_for(lead: str) -> Report:
-    return Report(
-        summary=f"Findings about: {lead}",
-        evidence=[
-            EvidenceItem(
-                url="https://example.org/source",
-                title="Source",
-                quote=f"A passage relevant to {lead}",
-                stance=Stance.SUPPORTS,
-                grounded=True,
-            )
-        ],
-        undetermined="Nothing further was checked.",
-    )
+    return Report(notes=f"Findings about: {lead}")
 
 
 @dataclass
@@ -92,6 +73,13 @@ class RecordingModel:
     """When true, the chat reply waits until the test calls release_reply()."""
 
     decompose_calls: list[dict[str, Any]] = field(default_factory=list)
+    final_report: str = "The report."
+    """What the model writes once every started lead has finished."""
+    report_leads: Sequence[str] = ()
+    report_error: Exception | None = None
+    hold_report: bool = False
+    report_calls: list[dict[str, Any]] = field(default_factory=list)
+    _report_gate: asyncio.Event = field(default_factory=asyncio.Event)
     image_description: str = "A described image."
     image_error: Exception | None = None
     image_calls: list[tuple[str, bytes, str]] = field(default_factory=list)
@@ -117,6 +105,9 @@ class RecordingModel:
     def release_reply(self) -> None:
         self._reply_gate.set()
 
+    def release_report(self) -> None:
+        self._report_gate.set()
+
     def release_decompose(self) -> None:
         self._decompose_gate.set()
 
@@ -124,6 +115,8 @@ class RecordingModel:
         self.hold = False
         self.hold_reply = False
         self.hold_decompose = False
+        self.hold_report = False
+        self._report_gate.set()
         self._reply_gate.set()
         self._decompose_gate.set()
         for gate in self._gates.values():
@@ -186,6 +179,20 @@ class RecordingModel:
         if self.converse_error is not None:
             raise self.converse_error
         return ChatReply(body=self.reply, leads=list(self.proposed))
+
+    async def write_report(
+        self,
+        context: ChatContext,
+        *,
+        model: str,
+        on_progress: ProgressCallback | None = None,
+    ) -> ChatReply:
+        self.report_calls.append({"context": context, "model": model})
+        if self.hold_report:
+            await self._report_gate.wait()
+        if self.report_error is not None:
+            raise self.report_error
+        return ChatReply(body=self.final_report, leads=list(self.report_leads))
 
     async def research(
         self,

@@ -80,7 +80,7 @@ def test_a_version_one_database_is_upgraded_and_keeps_its_jobs(tmp_path: Path) -
     assert done.usage == USAGE
     store.close()
     with sqlite3.connect(path) as check:
-        assert check.execute("PRAGMA user_version").fetchone() == (5,)
+        assert check.execute("PRAGMA user_version").fetchone() == (6,)
 
 
 async def test_the_job_runner_saves_what_the_model_reports() -> None:

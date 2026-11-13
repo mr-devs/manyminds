@@ -155,6 +155,8 @@ async def test_a_failed_thread_offers_to_try_again(
     with user.scope(marker="thread-row-0"):
         await user.should_see("Failed")
     user.find(marker="thread-row-0").click()
+    # The reason is also shown where the thread handed back, so wait for the thread's own page.
+    await user.should_see("Try again")
     await user.should_see("Stopped: The provider fell over.")
 
     model.failures.clear()

@@ -88,19 +88,20 @@ async def test_a_finished_thread_shows_the_whole_transcript_in_order(
         "Searching: bridge opening date",
         SOURCES,
         MESSAGE,
-        "Report ready",
+        "Findings handed back",
     ]
 
 
 async def test_the_report_comes_after_the_transcript(user: User, model: RecordingModel) -> None:
     await open_first_thread(user, model, hold=False)
 
-    await user.should_see("Summary")
+    await user.should_see("Findings")
     await user.should_see("Findings about: Lead A")
     with user:
         (area,) = ElementFilter(kind=ui.scroll_area)
         inside = [label.text for label in ElementFilter(kind=ui.label).within(instance=area)]
-    assert inside.index("Report ready") < inside.index("Summary")
+    assert inside.index("Findings handed back") < inside.index("Findings")
+    assert inside.index("Findings") < inside.index("Findings about: Lead A")
 
 
 async def test_thinking_and_sources_are_labelled_as_such(user: User, model: RecordingModel) -> None:
@@ -120,7 +121,7 @@ async def test_new_entries_are_added_live_without_rebuilding_earlier_ones(
 
     model.release("Lead A")
     await user.should_see(MESSAGE)
-    await user.should_see("Summary")
+    await user.should_see("Findings")
 
     with user:
         after = [label.id for label in ElementFilter(kind=ui.label, marker="transcript-text")]
@@ -138,7 +139,7 @@ async def test_a_failed_thread_ends_its_transcript_with_the_reason(
     await user.should_see("Failed")
 
     assert transcript_texts(user)[-1] == "Stopped: Upstream error"
-    await user.should_not_see("Summary")
+    await user.should_not_see(marker="findings")
 
 
 async def test_transcript_text_is_shown_as_plain_text(user: User, model: RecordingModel) -> None:
@@ -159,7 +160,7 @@ async def test_transcript_text_is_shown_as_plain_text(user: User, model: Recordi
     with user.scope(marker="thread-row-1"):
         await user.should_see("Finished")
     user.find(marker="thread-row-1").click()
-    await user.should_see("Report ready")
+    await user.should_see("Findings handed back")
 
     # Thinking and notes are formatted, so the image syntax becomes a link; the markup that
     # comes before it is still shown as the text it is.
@@ -205,7 +206,7 @@ async def test_the_view_follows_when_the_content_grows(
     seen_before = len(scrolls)
 
     model.release("Lead A")
-    await user.should_see("Summary")
+    await user.should_see("Findings")
     report(user, GREW_WHILE_AT_END)
 
     assert len(scrolls) > seen_before
@@ -233,7 +234,7 @@ async def test_scrolling_up_stops_the_view_from_following(
     report(user, SCROLLED_UP)
     seen_before = len(scrolls)
     model.release("Lead A")
-    await user.should_see("Summary")
+    await user.should_see("Findings")
     report(user, GREW_WHILE_SCROLLED_UP)
 
     assert len(scrolls) == seen_before
@@ -250,7 +251,7 @@ async def test_returning_to_the_end_resumes_following(
     report(user, AT_END)
     seen_before = len(scrolls)
     model.release("Lead A")
-    await user.should_see("Summary")
+    await user.should_see("Findings")
     report(user, GREW_WHILE_AT_END)
 
     assert len(scrolls) > seen_before

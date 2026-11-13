@@ -164,6 +164,8 @@ async def test_the_model_is_given_the_conversation_the_leads_and_only_finished_r
         "context": ChatContext(
             turns=(
                 PastTurn(MessageRole.USER, TEXT),
+                # Written by itself once the first two leads had finished.
+                PastTurn(MessageRole.ASSISTANT, "The report."),
                 PastTurn(MessageRole.USER, "What do we know?"),
                 PastTurn(MessageRole.ASSISTANT, "First answer."),
             ),

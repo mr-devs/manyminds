@@ -3,7 +3,7 @@
 from nicegui import ElementFilter, ui
 from nicegui.testing import User
 
-from manyminds.core.models import EvidenceItem, Report, Stance
+from manyminds.core.models import Report
 from manyminds.core.services import Services
 from support import Faults, RecordingModel, start_all
 
@@ -172,48 +172,40 @@ async def open_first_report(user: User) -> None:
     with user.scope(marker="thread-row-0"):
         await user.should_see("Finished")
     user.find(marker="thread-row-0").click()
-    await user.should_see("Summary")
+    await user.should_see("Findings")
 
 
-async def test_a_titled_source_also_shows_its_real_host(user: User, model: RecordingModel) -> None:
+async def test_a_link_written_with_a_title_goes_to_the_address_it_was_given(
+    user: User, model: RecordingModel
+) -> None:
     model.reports["Lead A"] = Report(
-        summary="One source.",
-        evidence=[
-            EvidenceItem(
-                url="https://evil.example/statement?id=1",
-                title="Reuters: official statement",
-                quote="A quoted passage.",
-                stance=Stance.SUPPORTS,
-                grounded=True,
-            )
-        ],
-        undetermined="Everything else.",
+        notes="[Reuters: official statement](https://evil.example/statement?id=1) says so."
     )
 
     await open_first_report(user)
 
-    with user.scope(marker="evidence-supports"):
-        await user.should_see(kind=ui.link, content="Reuters: official statement")
-        await user.should_see(kind=ui.label, content="evil.example")
+    (link,) = user.find(kind=ui.link, content="Reuters: official statement").elements
+    assert link.props["href"] == "https://evil.example/statement?id=1"
+    assert link.props["target"] == "_blank"
 
 
-async def test_an_untitled_source_shows_its_address_once(user: User, model: RecordingModel) -> None:
+async def test_links_the_search_never_returned_are_listed_under_the_findings(
+    user: User, model: RecordingModel
+) -> None:
     model.reports["Lead A"] = Report(
-        summary="One source.",
-        evidence=[
-            EvidenceItem(
-                url="https://example.net/page", quote="A quoted passage.", stance=Stance.SUPPORTS
-            )
-        ],
-        undetermined="Everything else.",
+        notes="See https://example.net/page and https://made-up.example/proof.",
+        unreturned_links=["https://made-up.example/proof"],
     )
 
     await open_first_report(user)
 
-    with user.scope(marker="evidence-supports"):
-        await user.should_see(kind=ui.link, content="https://example.net/page")
-    with user:
-        hosts = [
-            label.text for label in ElementFilter(kind=ui.label) if label.text == "example.net"
-        ]
-    assert hosts == []
+    with user.scope(marker="unreturned-links"):
+        await user.should_see("Links the search did not return")
+        await user.should_see(kind=ui.label, content="https://made-up.example/proof")
+        await user.should_not_see("https://example.net/page")
+
+
+async def test_findings_with_every_link_returned_carry_no_warning(user: User) -> None:
+    await open_first_report(user)
+
+    await user.should_not_see(marker="unreturned-links")

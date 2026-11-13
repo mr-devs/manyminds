@@ -7,24 +7,20 @@ Storage failures are injected at the SQLite connection, the real boundary, throu
 import logging
 import sqlite3
 from pathlib import Path
-from typing import Any
 
 import pytest
-from pydantic import ValidationError
 
 from manyminds.core.checks import CheckService
 from manyminds.core.errors import ModelError
 from manyminds.core.jobs import JobManager
 from manyminds.core.models import (
     ErrorKind,
-    EvidenceItem,
     Job,
     JobEventKind,
     JobStatus,
     LeadOrigin,
     Report,
     SearchEngine,
-    Stance,
     Thread,
 )
 from manyminds.core.storage import NotFoundError, Store
@@ -411,16 +407,3 @@ async def test_a_launch_that_cannot_be_fully_saved_starts_nothing(
     assert store.list_threads(check.id) == []
     assert [lead.text for lead in store.list_draft_leads(check.id)] == ["One", "Two"]
     assert model.research_calls == []
-
-
-def quote_of(length: int) -> dict[str, Any]:
-    return {"url": "https://example.org/a", "quote": "q" * length, "stance": Stance.SUPPORTS}
-
-
-def test_a_quote_may_be_two_thousand_characters() -> None:
-    assert len(EvidenceItem.model_validate(quote_of(2000)).quote) == 2000
-
-
-def test_a_longer_quote_is_rejected() -> None:
-    with pytest.raises(ValidationError):
-        EvidenceItem.model_validate(quote_of(2001))

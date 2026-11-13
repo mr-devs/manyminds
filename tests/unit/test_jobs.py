@@ -2,7 +2,7 @@
 
 from manyminds.core.checks import CheckService
 from manyminds.core.errors import ModelError
-from manyminds.core.events import EventBus, JobUpdated, Update
+from manyminds.core.events import ChatUpdated, EventBus, JobUpdated, Update
 from manyminds.core.jobs import JobManager
 from manyminds.core.models import (
     ErrorKind,
@@ -208,7 +208,8 @@ async def test_announcements_say_which_check_and_thread_changed(
     assert {
         (event.check_id, event.thread_id) for event in events if isinstance(event, JobUpdated)
     } == {(thread.check_id, thread.id)}
-    assert all(isinstance(event, JobUpdated) for event in events)
+    # The job ending is also announced to the check's conversation.
+    assert ChatUpdated(check_id=thread.check_id) in events
 
 
 async def test_unsubscribed_listeners_hear_nothing_more(

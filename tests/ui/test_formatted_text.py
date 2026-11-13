@@ -28,7 +28,7 @@ async def open_thread_with(user: User, model: RecordingModel, kind: JobEventKind
     with user.scope(marker="thread-row-0"):
         await user.should_see("Finished")
     user.find(marker="thread-row-0").click()
-    await user.should_see("Report ready")
+    await user.should_see("Findings handed back")
 
 
 def classes_of(user: User, text: str) -> set[str]:
