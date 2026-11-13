@@ -17,6 +17,7 @@ from manyminds.core.models import (
     LeadOrigin,
     LeadState,
     Message,
+    MessageKind,
     MessageRole,
     MessageStatus,
     SearchEngine,
@@ -29,6 +30,7 @@ from manyminds.core.ports import (
     IN_PROGRESS,
     NOT_STARTED,
     ChatContext,
+    ChatReply,
     LeadNote,
     ModelClient,
     PastTurn,
@@ -135,6 +137,9 @@ class CheckService:
         self._bus = bus
         self._decompose_model = decompose_model
         self._chat_model = chat_model
+        self._report_due: set[str] = set()
+        """Checks whose research finished while a reply was being written."""
+        jobs.on_settled = self._research_settled
         self._replying: set[str] = set()
         """Checks with a reply being written right now."""
         self._search_engine = search_engine
@@ -268,6 +273,7 @@ class CheckService:
                 for message in self.store.list_messages(check_id)
                 if message.role is MessageRole.ASSISTANT
                 and message.status is MessageStatus.COMPLETE
+                and message.kind is not MessageKind.HANDBACK
             ]
             message_id = replies[-1] if replies else None
         return self.store.add_lead(check_id, "", LeadOrigin.MANUAL, message_id)
@@ -371,6 +377,34 @@ class CheckService:
         finally:
             self._replying.discard(check_id)
             self._bus.publish(ChatUpdated(check_id=check_id))
+            if check_id in self._report_due:
+                self._research_settled(check_id)
+
+    def _research_settled(self, check_id: str) -> None:
+        """A research job on this check has ended. Once none is left waiting or running, the
+        report is written from everything the threads handed back."""
+        try:
+            if self.store.count_unfinished_jobs(check_id):
+                return
+            if check_id in self._replying:
+                self._report_due.add(check_id)
+                return
+            self._report_due.discard(check_id)
+            if not any(note.reports for note in self._lead_notes(check_id)):
+                return  # Every lead failed: there is nothing to write a report from.
+            reply = self.store.begin_report(check_id)
+        except Exception as error:
+            logger.error("The report on check %s could not be started: %s", check_id, error)
+            return
+        self._replying.add(check_id)
+        self.jobs.spawn(self._settle(check_id, reply, self._report(reply)))
+
+    async def _report(self, reply: Message) -> Message:
+        context = self._chat_context(reply.check_id, self.store.list_messages(reply.check_id))
+        answer = await self._model.write_report(
+            context, model=self._chat_model, on_progress=self._recorder(reply)
+        )
+        return self._finish(reply, answer)
 
     async def _reply(self, reply: Message, context: ChatContext) -> Message:
         check_id = reply.check_id
@@ -388,6 +422,11 @@ class CheckService:
             images=await self._look_at_images(asked, record),
             on_progress=record,
         )
+        return self._finish(reply, answer)
+
+    def _finish(self, reply: Message, answer: ChatReply) -> Message:
+        """Save what the model wrote for a reply, with the leads it proposed that are new."""
+        check_id = reply.check_id
         room = MAX_LEADS - len(self.store.list_draft_leads(check_id))
         existing = [lead.text for lead in self.store.list_leads(check_id)]
         fresh = _unique_leads(answer.leads, len(answer.leads), existing)
@@ -404,8 +443,13 @@ class CheckService:
             PastTurn(message.role, message.body, images)
             for message in messages
             if message.status is MessageStatus.COMPLETE
+            and message.kind is not MessageKind.HANDBACK
             and ((images := tuple(self.store.list_image_descriptions(message.id))) or message.body)
         )
+        return ChatContext(turns=turns, leads=tuple(self._lead_notes(check_id)))
+
+    def _lead_notes(self, check_id: str) -> list[LeadNote]:
+        """Every lead on a check with how far it has got and what its threads handed back."""
         threads = {thread.lead_id: thread for thread in self.store.list_threads(check_id)}
         notes = []
         for lead in self.store.list_leads(check_id):
@@ -425,7 +469,7 @@ class CheckService:
                 notes.append(LeadNote(thread.lead_text, FAILED))
             else:
                 notes.append(LeadNote(thread.lead_text, IN_PROGRESS))
-        return ChatContext(turns=turns, leads=tuple(notes))
+        return notes
 
     def retry_thread(self, thread_id: str) -> list[Job]:
         """Run a failed thread again, once for each model whose latest attempt failed."""

@@ -31,18 +31,28 @@ SEARCH_INSTRUCTIONS = (
     "single origin. When a page will not open, as social media posts often will not, find "
     "the same material another way: a mirror or archive of the post, an embed, or coverage "
     "that reproduces it. Follow a video or image to where it was first published and "
-    "report what that source says about it. Then write notes on what the sources say: for "
-    "each useful source give "
-    "its URL, its title, a short passage copied exactly from the search result or the page, "
-    "and whether the passage supports or undermines the lead. Say what you could not find "
-    "out. Do not give a verdict or a rating on whether the lead is true. " + _DATA_RULE
+    "report what that source says about it. Your last message is handed back to the main "
+    "conversation as your findings, so write it to stand alone, in simple markdown: a short "
+    "summary, then for each useful source its URL, its title, a short passage copied exactly "
+    "from the search result or the page, and whether it supports or undermines the lead, "
+    "then what you could not find out. Give only URLs the search or a page you opened gave "
+    "you. Do not give a verdict or a rating on whether the lead is true. " + _DATA_RULE
 )
 
 REPORT_INSTRUCTIONS = (
-    "Turn research notes into a report in the required JSON format. Use only the sources "
-    "given. Each quote must be copied exactly from that source's text. The summary is neutral: "
-    "it describes what the sources say and gives no verdict, rating or confidence. "
-    "`undetermined` states what could not be established. " + _DATA_RULE
+    "You are the main conversation in a research tool. Every lead the user started has now "
+    "finished, and what each research thread handed back is given to you. Write one report "
+    "on what was found, in `reply`, in simple markdown.\n\n"
+    "Open with what the user wanted checked. Then set out what the research established, "
+    "bringing related findings together instead of going thread by thread. For each point "
+    "say which lead it comes from, give the source's URL, and quote the passage where the "
+    "thread did. Say where sources conflict, where a point rests on one source or on a link "
+    "flagged as not returned by the search, and which leads failed. End with what could not "
+    "be determined.\n\n"
+    "Use only what the threads handed back. Do not give a verdict, rating or confidence on "
+    "whether anything is true: set out the evidence and leave the judgement to the user. If "
+    "more research would help, propose leads in `leads`; they start nothing. Otherwise leave "
+    "`leads` empty. " + _DATA_RULE
 )
 
 DECOMPOSE_INSTRUCTIONS = (
@@ -84,7 +94,7 @@ CHAT_INSTRUCTIONS = (
     "one a single checkable point that stands on its own, worded neutrally, and not a repeat "
     "of a lead already listed. Proposed leads start nothing; the user decides which to "
     "research. Otherwise leave `leads` empty.\n\n"
-    "Write `reply` in plain text with no markdown, and keep it short. The user's earlier "
+    "Write `reply` in simple markdown, and keep it short. The user's earlier "
     "turns are also the user speaking. " + _MESSAGE_RULE
 )
 
@@ -108,21 +118,6 @@ def search_input(lead: str, source_text: str, instructions: str) -> str:
     return (
         f"{_block('lead', lead)}\n\nThe lead comes from this text:\n"
         f"{_block('pasted_text', source_text)}{_owner_instructions(instructions)}"
-    )
-
-
-def report_input(
-    lead: str, sources: Sequence[tuple[str, str | None, Sequence[str]]], notes: str
-) -> str:
-    """`sources` are (url, title, passages) as returned by the search tool."""
-    blocks = []
-    for url, title, passages in sources:
-        head = f'<source url="{_attribute(url)}" title="{_attribute(title or "")}">'
-        blocks.append(f"{head}\n{as_data(_capped(passages))}\n</source>")
-    return (
-        f"{_block('lead', lead)}\n\nSearch results:\n"
-        + "\n".join(blocks)
-        + f"\n\nResearch notes:\n{_block('notes', notes)}"
     )
 
 
@@ -202,6 +197,11 @@ def linked_sites(text: str) -> list[str]:
         if not is_image and host not in hosts:
             hosts.append(host)
     return hosts
+
+
+def links_in(text: str) -> list[str]:
+    """Every web address written in a text, each once, in order."""
+    return [url for url, _, _ in _links(text)]
 
 
 def page_links(text: str) -> list[str]:
@@ -334,15 +334,19 @@ def search_findings(notes: str, sources: Sequence[tuple[str, str | None, Sequenc
     )
 
 
-def report_lines(summary: str, evidence: Sequence[tuple[str, str, str, bool]], unknown: str) -> str:
-    """A finished report written out for the chat model. Evidence is (stance, url, quote,
-    grounded)."""
-    lines = [f"Summary: {summary}", "Evidence:" if evidence else "Evidence: none"]
-    for stance, url, quote, grounded in evidence:
-        flag = "" if grounded else " (not among the search results)"
-        lines.append(f"- {stance}: {url}{flag} says: {' '.join(quote.split())}")
-    lines.append(f"Not determined: {unknown}")
-    return "\n".join(lines)
+MAX_FINDINGS_CHARS = 12000
+
+
+def findings_text(notes: str, unreturned_links: Sequence[str]) -> str:
+    """What one research thread handed back, as the main conversation is given it."""
+    text = notes[:MAX_FINDINGS_CHARS]
+    if unreturned_links:
+        listed = "\n".join(f"- {url}" for url in unreturned_links)
+        text += (
+            "\n\nLinks in these findings that the search did not return, and so may not be "
+            f"real:\n{listed}"
+        )
+    return text
 
 
 def attached_images(descriptions: Sequence[str | None]) -> list[tuple[str, str | None]]:
@@ -354,7 +358,7 @@ def attached_images(descriptions: Sequence[str | None]) -> list[tuple[str, str |
 
 
 def chat_input(
-    message: str,
+    message: str | None,
     turns: Sequence[tuple[str, str, Sequence[str | None]]],
     leads: Sequence[tuple[str, str, Sequence[str]]],
     pages: Sequence[tuple[str, str | None, str | None]] = (),
@@ -362,7 +366,7 @@ def chat_input(
     findings: str = "",
 ) -> str:
     """`turns` are (role, body, what its attached images showed); `leads` are (text, state,
-    reports as written out lines).
+    what its threads handed back). With no message, the input is for the final report.
 
     What an image showed is a model's words, so it goes in a block of its own after the turn
     and never inside what the user said.
@@ -390,7 +394,8 @@ def chat_input(
         parts.append(_images(images))
     if findings:
         parts.append(findings)
-    parts.append(f"The user's new message:\n{_block('user_message', message)}")
+    if message is not None:
+        parts.append(f"The user's new message:\n{_block('user_message', message)}")
     return "\n\n".join(parts)
 
 

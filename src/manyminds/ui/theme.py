@@ -10,7 +10,7 @@ from datetime import datetime
 
 from nicegui import ui
 
-from manyminds.core.models import Check, ThreadStatus
+from manyminds.core.models import Check, ThreadStatus, Usage
 
 STATUS_TEXT = {
     ThreadStatus.QUEUED: "Queued",
@@ -259,6 +259,19 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
 }
 .mm-md-rule { margin: 4px 0; }
 .mm-passage-text.column, .mm-say.column { gap: 0; align-items: stretch; }
+/* A research thread handing back to the main conversation. */
+.mm-handback.q-expansion-item {
+    border: 1px solid var(--mm-hairline); border-radius: 12px; background: var(--mm-paper);
+}
+.mm-handback .q-item { padding: 10px 14px; min-height: 0; border-radius: 12px; }
+.mm-handback .q-focus-helper { display: none; }
+.mm-handback .q-expansion-item__content { padding: 4px 16px 16px; }
+.mm-handback-head { align-items: center; gap: 12px; flex-wrap: nowrap; width: 100%; }
+.mm-handback-lead { font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; flex: 1 1 auto; }
+.mm-handback-body { gap: 12px; align-items: stretch; font-size: 15px; line-height: 1.6; }
+.mm-findings { gap: 12px; align-items: stretch; font-size: 16px; line-height: 1.6; }
+.mm-unreturned { font-size: 13px; color: #3a3a3c; overflow-wrap: anywhere; }
+.mm-final { gap: 10px; align-items: stretch; }
 .mm-hidden { display: none !important; }
 /* Images waiting to be sent, and images already sent. */
 .mm-tray { gap: 8px; padding: 8px 0 2px; }
@@ -481,6 +494,15 @@ def content(*, home: bool = False, tall: bool = False) -> Iterator[None]:
     extra = (" mm-home" if home else "") + (" mm-tall" if tall else "")
     with ui.column().classes("mm-column" + extra):
         yield
+
+
+def usage_line(usage: Usage | None) -> str | None:
+    """What a job used, as one line, or None when there is nothing to report."""
+    if usage is None or not (usage.searches or usage.input_tokens or usage.output_tokens):
+        return None
+    searches = "1 search" if usage.searches == 1 else f"{usage.searches} searches"
+    tokens = usage.input_tokens + usage.output_tokens
+    return f"{searches}, {tokens:,} tokens, ${usage.cost:.4f}"
 
 
 def status_label(status: ThreadStatus) -> ui.label:

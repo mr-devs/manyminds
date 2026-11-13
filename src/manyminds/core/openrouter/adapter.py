@@ -14,7 +14,6 @@ from manyminds.core import prompts
 from manyminds.core.errors import ModelError
 from manyminds.core.models import (
     ErrorKind,
-    EvidenceItem,
     JobEventKind,
     Report,
     SearchEngine,
@@ -24,10 +23,8 @@ from manyminds.core.openrouter import websearch
 from manyminds.core.openrouter.schemas import (
     CHAT_SCHEMA,
     DECOMPOSITION_SCHEMA,
-    REPORT_SCHEMA,
     WireChatReply,
     WireDecomposition,
-    WireReport,
     text_format,
 )
 from manyminds.core.openrouter.transport import Transport
@@ -39,7 +36,6 @@ from manyminds.core.ports import (
     ProgressCallback,
     ResearchResult,
 )
-from manyminds.core.safety import quote_in_passages, url_key
 
 _Wire = TypeVar("_Wire", bound=BaseModel)
 _MAX_PROBLEM_TEXT = 2000
@@ -166,25 +162,8 @@ class OpenRouterModelClient:
         tell = on_progress or _silent
         shared = await self._shared(message, model, tally, tell, tolerant=True)
         pictures = prompts.attached_images(images) + shared.images
-        leads = [
-            (
-                note.text,
-                note.state,
-                [
-                    prompts.report_lines(
-                        report.summary,
-                        [
-                            (item.stance.value, item.url, item.quote, item.grounded)
-                            for item in report.evidence
-                        ],
-                        report.undetermined,
-                    )
-                    for report in note.reports
-                ],
-            )
-            for note in context.leads
-        ]
-        turns = [(turn.role.value, turn.body, turn.images) for turn in context.turns]
+        leads = _leads(context)
+        turns = _turns(context)
         given = prompts.chat_input(message, turns, leads, shared.pages, pictures)
         findings = await self._look_up(given, model, search, tally, tell)
         body = {
@@ -363,7 +342,22 @@ class OpenRouterModelClient:
         search: SearchEngine,
         on_progress: ProgressCallback,
     ) -> ResearchResult:
+        """Research one lead in a single call. What the agent writes last is what it hands
+        back; anything it wrote along the way is reported as progress."""
         tally = _Tally()
+        held: list[dict[str, Any]] = []
+
+        def on_item(item: dict[str, Any]) -> None:
+            # A message is only known to be the last once the call ends, so each is held
+            # until something follows it.
+            if item.get("type") == "message":
+                held.append(item)
+                return
+            for earlier in held:
+                _report_progress(earlier, on_progress)
+            held.clear()
+            _report_progress(item, on_progress)
+
         found = await self._run(
             {
                 "model": model,
@@ -373,23 +367,36 @@ class OpenRouterModelClient:
                 **websearch.REQUEST_FIELDS,
             },
             tally,
-            lambda item: _report_progress(item, on_progress),
+            on_item,
         )
-        notes = _text(found)
-        if not notes.strip():
+        notes = _last_words(found).strip()
+        if not notes:
             raise ModelError(ErrorKind.INVALID_OUTPUT, "The model searched but wrote nothing.")
-        cited = websearch.citations(found)
+        returned = [source.url for source in websearch.citations(found)]
+        unreturned = [
+            url
+            for url in prompts.links_in(notes)
+            if not any(prompts.same_page(url, known) for known in returned)
+        ]
+        return ResearchResult(
+            report=Report(notes=notes, unreturned_links=unreturned), usage=tally.usage()
+        )
 
-        on_progress(Progress(JobEventKind.WRITING))
+    async def write_report(
+        self,
+        context: ChatContext,
+        *,
+        model: str,
+        on_progress: ProgressCallback | None = None,
+    ) -> ChatReply:
+        """Write the one report on a check, from what its threads handed back. No tools."""
         body = {
             "model": model,
             "instructions": prompts.REPORT_INSTRUCTIONS,
-            "input": prompts.report_input(
-                lead, [(c.url, c.title, c.passages) for c in cited], notes
-            ),
+            "input": prompts.chat_input(None, _turns(context), _leads(context)),
         }
-        wire = await self._structured(body, "report", REPORT_SCHEMA, WireReport, tally)
-        return ResearchResult(report=_grounded(wire, cited), usage=tally.usage())
+        wire = await self._structured(body, "report", CHAT_SCHEMA, WireChatReply, _Tally())
+        return ChatReply(body=wire.reply, leads=wire.leads)
 
     async def _structured(
         self,
@@ -540,24 +547,34 @@ def _report_progress(item: dict[str, Any], on_progress: ProgressCallback) -> Non
             on_progress(Progress(JobEventKind.MESSAGE, text))
 
 
-def _grounded(wire: WireReport, cited: Sequence[websearch.Citation]) -> Report:
-    """Build the report, flagging each item against what the search tool returned."""
-    by_key = {url_key(c.url): c for c in cited}
-    evidence = []
-    for item in wire.evidence:
-        source = by_key.get(url_key(item.url))
-        evidence.append(
-            EvidenceItem(
-                # A grounded item links to the page the search returned, not to whatever
-                # variant of its address the model wrote.
-                url=source.url if source is not None else item.url,
-                title=item.title,
-                quote=item.quote,
-                stance=item.stance,
-                grounded=source is not None,
-                quote_matched=(
-                    quote_in_passages(item.quote, source.passages) if source is not None else None
-                ),
-            )
+def _turns(context: ChatContext) -> list[tuple[str, str, Sequence[str | None]]]:
+    return [(turn.role.value, turn.body, turn.images) for turn in context.turns]
+
+
+def _leads(context: ChatContext) -> list[tuple[str, str, Sequence[str]]]:
+    return [
+        (
+            note.text,
+            note.state,
+            [
+                prompts.findings_text(report.notes, report.unreturned_links)
+                for report in note.reports
+            ],
         )
-    return Report(summary=wire.summary, evidence=evidence, undetermined=wire.undetermined)
+        for note in context.leads
+    ]
+
+
+def _last_words(response: dict[str, Any]) -> str:
+    """What the model wrote after its last search or page: the messages that end its output."""
+    output = response.get("output")
+    items = [
+        item for item in (output if isinstance(output, list) else []) if isinstance(item, dict)
+    ]
+    last: list[dict[str, Any]] = []
+    for item in items:
+        if item.get("type") == "message":
+            last.append(item)
+        elif item.get("type") != "reasoning":
+            last = []
+    return _text({"output": last})

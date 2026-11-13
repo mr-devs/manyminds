@@ -22,37 +22,19 @@ def _require_web_url(value: str) -> str:
 WebUrl = Annotated[NonBlank, AfterValidator(_require_web_url)]
 
 
-MAX_QUOTE_LENGTH = 2000
-
-
-class Stance(StrEnum):
-    """How one quoted passage bears on the lead. Not a judgement on the claim."""
-
-    SUPPORTS = "supports"
-    UNDERMINES = "undermines"
-
-
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class EvidenceItem(_Strict):
-    url: WebUrl
-    title: str | None = None
-    quote: Annotated[NonBlank, StringConstraints(max_length=MAX_QUOTE_LENGTH)]
-    stance: Stance
-    grounded: bool = False
-    """The URL was among the results the search tool returned for this job."""
-    quote_matched: bool | None = None
-    """The quote was found in the returned excerpt; None when there was no excerpt."""
-
-
 class Report(_Strict):
-    """Structured evidence for the user to judge. Deliberately has no verdict."""
+    """What a research agent hands back to the main conversation: its findings, as it wrote
+    them. There is no verdict field; the agent is told to give none."""
 
-    summary: NonBlank
-    evidence: list[EvidenceItem]
-    undetermined: NonBlank
+    notes: NonBlank
+    """Markdown. Shown formatted, never as markup."""
+    unreturned_links: list[str] = []
+    """Web addresses written in the notes that neither the search nor a page the agent
+    opened returned. They are flagged for the user, since the agent may have made them up."""
 
 
 class SearchEngine(StrEnum):
@@ -74,6 +56,14 @@ class LeadState(StrEnum):
 class MessageRole(StrEnum):
     USER = "user"
     ASSISTANT = "assistant"
+
+
+class MessageKind(StrEnum):
+    REPLY = "reply"
+    HANDBACK = "handback"
+    """A research thread reporting back. Its content is the thread's job, not a body."""
+    REPORT = "report"
+    """The report written once every started lead has finished."""
 
 
 class MessageStatus(StrEnum):
@@ -167,6 +157,9 @@ class Message(_Record):
     body: str
     error_message: str | None
     created_at: datetime
+    kind: MessageKind = MessageKind.REPLY
+    job_id: str | None = None
+    """For a hand-back, the research job that finished."""
 
 
 class Thread(_Record):

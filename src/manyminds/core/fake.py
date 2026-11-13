@@ -11,13 +11,12 @@ from collections.abc import Awaitable, Callable, Sequence
 from manyminds.core.errors import ModelError
 from manyminds.core.models import (
     ErrorKind,
-    EvidenceItem,
     JobEventKind,
     Report,
     SearchEngine,
-    Stance,
 )
 from manyminds.core.ports import (
+    FAILED,
     FINISHED,
     ChatContext,
     ChatReply,
@@ -65,20 +64,34 @@ Demo source B: https://example.org/demo/{slug}/b
   A second placeholder passage, this one pointing the other way."""
 
 NOTES = """\
-## Demo notes
+## Demo findings
 
-Here a real model would write up what it found. **Nothing below is real.**
+This is a demo report for the lead “{lead}”. **No real search was run.**
 
 ### Useful sources
 
-1. **Demo source A:** https://example.org/demo/a
+1. **Demo source A:** https://example.org/demo/{slug}/a
    **Passage:** "A placeholder passage that supports the lead."
    **Relation to lead:** Supports it.
-2. **Demo source B:** [a second placeholder](https://example.org/demo/b)
+2. **Demo source B:** [a second placeholder](https://example.org/demo/{slug}/b)
    **Relation to lead:** Cuts against it.
 
-- Neither settles the matter.
-- What remains unknown is listed as `could not be determined`."""
+### Could not be determined
+
+Everything: this is demo content, so nothing was actually checked."""
+
+REPORT = """\
+## Demo report
+
+A real model would bring together here what every research thread handed back.
+**Nothing below is real.**
+
+- {done} of {total} leads handed back findings.
+- {failed} failed.
+
+### Could not be determined
+
+Everything: this is demo content."""
 TITLE_LENGTH = 40
 
 Sleep = Callable[[float], Awaitable[None]]
@@ -140,11 +153,24 @@ class FakeModelClient:
             "finished research.",
             f"{len(finished)} of {len(context.leads)} leads have a finished report.",
         ]
-        lines += [f"- {note.text}: {note.reports[0].summary}" for note in finished if note.reports]
+        lines += [f"- {note.text}: findings handed back." for note in finished if note.reports]
         known = {note.text for note in context.leads}
         wants_leads = "lead" in message.casefold()
         fresh = [lead for lead in LEADS if lead not in known][:3] if wants_leads else []
         return ChatReply(body="\n".join(lines), leads=fresh)
+
+    async def write_report(
+        self,
+        context: ChatContext,
+        *,
+        model: str,
+        on_progress: ProgressCallback | None = None,
+    ) -> ChatReply:
+        await self._sleep(1.0)
+        done = sum(1 for note in context.leads if note.reports)
+        failed = sum(1 for note in context.leads if note.state == FAILED)
+        body = REPORT.format(done=done, total=len(context.leads), failed=failed)
+        return ChatReply(body=body)
 
     async def research(
         self,
@@ -166,27 +192,6 @@ class FakeModelClient:
         await self._sleep(step)
         if lead == FAILING_LEAD:
             raise ModelError(ErrorKind.PROVIDER, "Demo failure: this lead is scripted to fail.")
-        on_progress(Progress(JobEventKind.MESSAGE, NOTES))
-        on_progress(Progress(JobEventKind.WRITING))
         await self._sleep(step / 2)
-        report = Report(
-            summary=f"Demo report for the lead “{lead}”. No real search was run.",
-            evidence=[
-                EvidenceItem(
-                    url=f"https://example.org/demo/{slug}/a",
-                    title="Demo source A",
-                    quote="A placeholder passage standing in for a quotation supporting the lead.",
-                    stance=Stance.SUPPORTS,
-                    grounded=True,
-                ),
-                EvidenceItem(
-                    url=f"https://example.org/demo/{slug}/b",
-                    title="Demo source B",
-                    quote="A placeholder passage standing in for a quotation that cuts against it.",
-                    stance=Stance.UNDERMINES,
-                    grounded=True,
-                ),
-            ],
-            undetermined="Everything: this is demo content, so nothing was actually checked.",
-        )
-        return ResearchResult(report=report)
+        notes = NOTES.format(lead=lead, slug=slug)
+        return ResearchResult(report=Report(notes=notes))

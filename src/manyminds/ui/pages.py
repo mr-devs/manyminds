@@ -26,8 +26,10 @@ from manyminds.core.models import (
     Lead,
     LeadState,
     Message,
+    MessageKind,
     MessageRole,
     MessageStatus,
+    Report,
     Thread,
     ThreadStatus,
 )
@@ -35,7 +37,6 @@ from manyminds.core.services import Services
 from manyminds.core.storage import NotFoundError
 from manyminds.ui import markdown, theme
 from manyminds.ui.follow import Follower
-from manyminds.ui.report_view import report_view, usage_line
 
 Updates = Event[Update]
 
@@ -408,18 +409,25 @@ def check_page(
                         ui.label(f"Read as: {image.description}").classes("mm-read-as")
                 if message.body:
                     ui.label(message.body).classes("mm-bubble").mark("user-message")
+            elif message.kind is MessageKind.HANDBACK:
+                _handback(services, message)
             elif message.status is MessageStatus.PENDING:
                 steps = ui.column().classes("mm-steps")
                 working[message.id] = (steps, 0)
+                doing = "Writing a reply"
+                if opening:
+                    doing = "Working out what to research"
+                elif message.kind is MessageKind.REPORT:
+                    doing = "Every lead has finished. Writing the report"
                 with ui.row().classes("mm-pending"):
                     ui.spinner(size="sm", color="grey-6")
-                    ui.label(
-                        "Working out what to research" if opening else "Writing a reply"
-                    ).classes(theme.MUTED)
+                    ui.label(doing).classes(theme.MUTED)
             elif message.status is MessageStatus.FAILED:
                 _steps_taken(services, message)
                 reason = message.error_message or "unknown reason"
                 lead_in = "Leads could not be generated" if opening else "No reply"
+                if message.kind is MessageKind.REPORT:
+                    lead_in = "The report could not be written"
                 ui.label(f"{lead_in}: {reason}").classes("mm-reply-error").mark("reply-error")
                 if opening:
                     ui.button("Try again", on_click=try_again).props("flat no-caps").classes(
@@ -434,6 +442,8 @@ def check_page(
                         ui.label(message.body).classes("mm-read-text").mark("read")
                 elif message.body:
                     with ui.column().classes("mm-say"):
+                        if message.kind is MessageKind.REPORT:
+                            ui.label("Report").classes("mm-report-heading").mark("final-report")
                         markdown.show(message.body, mark="reply")
                 lead_group(message, opening)
 
@@ -556,6 +566,50 @@ def check_page(
         _follow(updates, page, lambda event: event.check_id == check_id, on_update)
 
 
+def _findings(report: Report) -> None:
+    """What a research thread handed back: its notes, formatted, and any links in them that
+    its searches never returned."""
+    with ui.column().classes("mm-findings"):
+        markdown.show(report.notes, mark="findings")
+    if report.unreturned_links:
+        with ui.column().classes(theme.PANEL + " mm-open").mark("unreturned-links"):
+            ui.label("Links the search did not return").classes(theme.LABEL)
+            ui.label(
+                "The agent wrote these addresses, but they were not among its search results "
+                "or the pages it opened. Check them before relying on them."
+            ).classes(theme.MUTED)
+            for url in report.unreturned_links:
+                ui.label(url).classes("mm-unreturned")
+
+
+def _handback(services: Services, message: Message) -> None:
+    """A research thread reporting back in the main conversation. Folded, since findings
+    are long; the lead and how it ended are always in view."""
+    store = services.store
+    try:
+        job = store.get_job(message.job_id or "")
+        thread = store.get_thread(job.thread_id)
+    except NotFoundError:
+        return
+    report = store.get_report(job.id)
+    finished = report is not None
+    target = f"/check/{thread.check_id}/thread/{thread.id}"
+    with ui.expansion().classes("mm-handback").mark("handback") as box:
+        with box.add_slot("header"), ui.row().classes("mm-handback-head"):
+            theme.status_label(ThreadStatus.FINISHED if finished else ThreadStatus.FAILED)
+            ui.label(thread.lead_text).classes("mm-handback-lead")
+        with ui.column().classes("mm-handback-body"):
+            if report is not None:
+                _findings(report)
+                used = theme.usage_line(job.usage)
+                if used:
+                    ui.label(used).classes(theme.MUTED)
+            else:
+                reason = job.error_message or "unknown reason"
+                ui.label(f"Stopped: {reason}").classes("mm-reply-error")
+            ui.link("Open the thread to see its work", target).classes(theme.LINK)
+
+
 def _lead_row(
     services: Services,
     lead: Lead,
@@ -628,7 +682,7 @@ STEP_TEXT = {
     JobEventKind.WRITING: "Writing the report",
     JobEventKind.NOTE: "{detail}",
     JobEventKind.RETRYING: "Trying again: {detail}",
-    JobEventKind.FINISHED: "Report ready",
+    JobEventKind.FINISHED: "Findings handed back",
     JobEventKind.FAILED: "Stopped: {detail}",
 }
 """Entries shown as a single quiet line."""
@@ -728,8 +782,9 @@ def thread_page(services: Services, updates: Updates, check_id: str, thread_id: 
                     if report is not None and job.id not in concluded:
                         concluded.add(job.id)
                         with ui.column().classes("mm-report"):
-                            report_view(report)
-                            used = usage_line(job.usage)
+                            ui.label("Findings").classes("mm-report-heading")
+                            _findings(report)
+                            used = theme.usage_line(job.usage)
                             if used:
                                 ui.label(used).classes(theme.MUTED + " mm-usage").mark("usage")
             current = services.checks.thread_status(thread_id)

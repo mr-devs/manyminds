@@ -102,6 +102,16 @@ class ModelClient(Protocol):
         on_progress: ProgressCallback | None = None,
     ) -> ChatReply: ...
 
+    async def write_report(
+        self,
+        context: ChatContext,
+        *,
+        model: str,
+        on_progress: ProgressCallback | None = None,
+    ) -> ChatReply:
+        """Write one report from everything the research threads handed back."""
+        ...
+
     async def research(
         self,
         lead: str,

@@ -1,5 +1,6 @@
 """SQLite storage for checks and everything that follows from them."""
 
+import json
 import sqlite3
 import threading
 import uuid
@@ -22,6 +23,7 @@ from manyminds.core.models import (
     LeadOrigin,
     LeadState,
     Message,
+    MessageKind,
     MessageRole,
     MessageStatus,
     MessageStep,
@@ -137,6 +139,10 @@ MIGRATIONS: Sequence[str] = (
         data BLOB NOT NULL,
         description TEXT
     );
+    """,
+    """
+    ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'reply';
+    ALTER TABLE messages ADD COLUMN job_id TEXT REFERENCES jobs(id) ON DELETE CASCADE;
     """,
 )
 
@@ -550,7 +556,7 @@ class Store:
 
     def get_report(self, job_id: str) -> Report | None:
         rows = self._all("SELECT body FROM reports WHERE job_id = ?", (job_id,))
-        return Report.model_validate_json(rows[0]["body"]) if rows else None
+        return _report(rows[0]["body"]) if rows else None
 
     # -- conversation -----------------------------------------------------------------
 
@@ -561,17 +567,47 @@ class Store:
         role: MessageRole,
         status: MessageStatus,
         body: str,
+        kind: MessageKind = MessageKind.REPLY,
+        job_id: str | None = None,
     ) -> str:
         message_id = uuid.uuid4().hex
         (seq,) = db.execute(
             "SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE check_id = ?", (check_id,)
         ).fetchone()
         db.execute(
-            "INSERT INTO messages (id, check_id, seq, role, status, body, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (message_id, check_id, seq, role, status, body, self._stamp()),
+            "INSERT INTO messages "
+            "(id, check_id, seq, role, status, body, created_at, kind, job_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (message_id, check_id, seq, role, status, body, self._stamp(), kind, job_id),
         )
         return message_id
+
+    def add_handback(self, check_id: str, job_id: str) -> Message:
+        """Note in the conversation that a research job has finished, whichever way."""
+        with self._transaction() as db:
+            message_id = self._insert_message(
+                db,
+                check_id,
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETE,
+                "",
+                MessageKind.HANDBACK,
+                job_id,
+            )
+        return self.get_message(message_id)
+
+    def begin_report(self, check_id: str) -> Message:
+        """Save a place for the report on a check's research, still to be written."""
+        with self._transaction() as db:
+            message_id = self._insert_message(
+                db,
+                check_id,
+                MessageRole.ASSISTANT,
+                MessageStatus.PENDING,
+                "",
+                MessageKind.REPORT,
+            )
+        return self.get_message(message_id)
 
     def get_message(self, message_id: str) -> Message:
         row = self._one(
@@ -747,6 +783,25 @@ class Store:
             "SELECT * FROM job_events WHERE job_id = ? AND seq > ? ORDER BY seq", (job_id, after)
         )
         return [JobEvent.model_validate(dict(row)) for row in rows]
+
+
+def _report(body: str) -> Report:
+    """A stored report. Ones saved before reports became an agent's own notes held a
+    summary, quoted evidence and what was not determined; those are written out as notes."""
+    stored = json.loads(body)
+    if "notes" in stored:
+        return Report.model_validate(stored)
+    lines = [str(stored.get("summary", "")), ""]
+    for item in stored.get("evidence", []):
+        lines.append(f"- {item.get('stance', '')}: {item.get('title') or ''} {item.get('url', '')}")
+        lines.append(f'  "{item.get("quote", "")}"')
+    lines += ["", f"Could not be determined: {stored.get('undetermined', '')}"]
+    unreturned = [
+        str(item["url"])
+        for item in stored.get("evidence", [])
+        if not item.get("grounded") and item.get("url")
+    ]
+    return Report(notes="\n".join(lines).strip() or "(empty)", unreturned_links=unreturned)
 
 
 def _job(row: sqlite3.Row) -> Job:
