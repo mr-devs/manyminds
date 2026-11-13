@@ -137,10 +137,13 @@ def test_a_quoted_passage_is_its_own_block_without_its_marker() -> None:
     ]
 
 
-def test_a_quote_under_a_list_item_sits_under_it_and_what_follows_is_not_part_of_the_quote() -> (
-    None
-):
-    text = "- [NASA](https://nasa.example/a) — 2005.\n  > “Generally isn't.”\n  **Undermines** it.\n- Next"
+def test_a_quote_under_a_list_item_sits_under_it_and_what_follows_is_not_in_it() -> None:
+    text = (
+        "- [NASA](https://nasa.example/a) — 2005.\n"
+        "  > “Generally isn't.”\n"
+        "  **Undermines** it.\n"
+        "- Next"
+    )
 
     assert parse(text) == [
         Block(
