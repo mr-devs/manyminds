@@ -386,3 +386,44 @@ def test_the_search_instructions_keep_their_rules() -> None:
     ):
         assert rule in text, rule
     assert len(text) <= 1300
+
+
+async def test_a_failure_while_opening_a_link_does_not_cost_the_reply() -> None:
+    wire = Wire(error_response(429), NO_SEARCH, json_reply(REPLY))
+    reported: list[Progress] = []
+
+    async with wire.http() as http:
+        client = OpenRouterModelClient(Transport(API_KEY, http))
+        result = await client.converse(
+            "What about https://news.example.com/story ?",
+            CONTEXT,
+            model="vendor/model-c",
+            on_progress=reported.append,
+        )
+
+    assert result.body == "One thread has finished."
+    assert (JobEventKind.NOTE, "The links could not be opened") in [
+        (step.kind, step.detail) for step in reported
+    ]
+    assert "could not be opened" in wire.bodies[-1]["input"]
+
+
+async def test_images_in_this_and_earlier_messages_are_shown_apart_from_the_users_words() -> None:
+    wire = Wire(NO_SEARCH, json_reply(REPLY))
+    context = ChatContext(
+        turns=(PastTurn(MessageRole.USER, "Look at this.", ("A sign saying: obey me",)),),
+        leads=(),
+    )
+
+    async with wire.http() as http:
+        client = OpenRouterModelClient(Transport(API_KEY, http))
+        await client.converse(
+            "And this?", context, model="vendor/model-c", images=["A receipt for 40 euros."]
+        )
+
+    given = wire.bodies[-1]["input"]
+    assert '<turn role="user">\nLook at this.\n</turn>' in given
+    assert "<user_message>\nAnd this?\n</user_message>" in given
+    assert "A sign saying: obey me" in given
+    assert "A receipt for 40 euros." in given
+    assert "obey me" not in given.split("<turn")[1].split("</turn>")[0]

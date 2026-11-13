@@ -416,3 +416,15 @@ async def test_steps_for_a_later_reply_appear_while_it_is_being_written(
     model.release_reply()
     await user.should_see(marker="reply", content="A reply")
     await user.should_see("Steps taken")
+
+
+async def test_pressing_generate_twice_makes_one_check(user: User, services: Services) -> None:
+    await user.open("/")
+    user.find(marker="composer").type(TEXT)
+
+    user.find("Generate leads").click()
+    user.find("Generate leads").click()
+    user.find(marker="composer").trigger("keydown.enter.exact.prevent")
+
+    await user.should_see(marker="lead-list")
+    assert len(services.store.list_checks()) == 1

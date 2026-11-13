@@ -220,3 +220,15 @@ def test_a_database_that_fails_on_first_use_gets_the_short_message(
     assert status == 1
     assert "The saved checks could not be opened" in capsys.readouterr().err
     assert "services" not in served
+
+
+def test_a_data_folder_that_cannot_be_worked_out_gets_the_short_message(
+    served: dict[str, Any], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("MANYMINDS_DATA_DIR", "~no-such-user-here/data")
+    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+
+    status = cli.main([])
+
+    assert status == 1
+    assert "The data folder could not be used" in capsys.readouterr().err

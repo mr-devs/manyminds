@@ -4,6 +4,7 @@ import pytest
 
 from manyminds.core.checks import CheckService
 from manyminds.core.errors import ModelError
+from manyminds.core.events import ChatUpdated, EventBus, Update
 from manyminds.core.jobs import JobManager
 from manyminds.core.models import ErrorKind, ImageFile, JobEventKind, MessageRole
 from manyminds.core.ports import PastTurn
@@ -47,9 +48,9 @@ async def test_leads_are_written_from_the_text_and_what_the_images_show(
     check = service.start_check(TEXT, images=[PNG])
     await jobs.wait_until_idle()
 
-    assert model.decompose_calls[0]["text"] == (
-        TEXT + "\n\n" + NOTE.format(n=1, said="A chat screenshot dated 3 May.")
-    )
+    # The user's words and the model's reading of the image are kept apart.
+    assert model.decompose_calls[0]["text"] == TEXT
+    assert model.decompose_images == [["A chat screenshot dated 3 May."]]
     reply = store.list_messages(check.id)[1]
     assert [(s.kind, s.detail) for s in store.list_message_steps(reply.id)] == [
         (JobEventKind.NOTE, "Looking at attached image 1")
@@ -66,7 +67,8 @@ async def test_an_image_alone_is_enough_to_start_a_check(
     assert store.get_check(check.id).title == "Image"
     model.release_decompose()
     await jobs.wait_until_idle()
-    assert model.decompose_calls[0]["text"] == NOTE.format(n=1, said="A described image.")
+    assert model.decompose_calls[0]["text"] == ""
+    assert model.decompose_images == [["A described image."]]
     assert len(store.list_leads(check.id)) == 2
 
 
@@ -78,9 +80,8 @@ async def test_an_image_that_cannot_be_looked_at_is_said_so_and_leads_are_still_
     check = service.start_check(TEXT, images=[PNG])
     await jobs.wait_until_idle()
 
-    assert model.decompose_calls[0]["text"] == (
-        TEXT + "\n\n[Attached image 1 could not be looked at.]"
-    )
+    assert model.decompose_calls[0]["text"] == TEXT
+    assert model.decompose_images == [[None]]
     assert store.list_attachments(store.list_messages(check.id)[0].id)[0].description is None
     assert len(store.list_leads(check.id)) == 2
 
@@ -97,7 +98,7 @@ async def test_trying_again_does_not_look_at_an_image_twice(
     await jobs.wait_until_idle()
 
     assert len(model.image_calls) == 1
-    assert "A described image." in model.decompose_calls[1]["text"]
+    assert model.decompose_images[1] == ["A described image."]
 
 
 async def test_an_image_sent_later_is_read_by_the_reply_and_remembered(
@@ -112,8 +113,12 @@ async def test_an_image_sent_later_is_read_by_the_reply_and_remembered(
     await service.send(check.id, "Thanks.")
 
     seen = "And this one?\n\n" + NOTE.format(n=1, said="A receipt for 40 euros.")
-    assert model.converse_calls[0]["message"] == seen
-    assert PastTurn(MessageRole.USER, seen) in model.converse_calls[1]["context"].turns
+    assert model.converse_calls[0]["message"] == "And this one?"
+    assert model.converse_images[0] == ["A receipt for 40 euros."]
+    assert (
+        PastTurn(MessageRole.USER, "And this one?", ("A receipt for 40 euros.",))
+        in model.converse_calls[1]["context"].turns
+    )
 
     proposed = store.list_leads(check.id)[1]
     service.launch_lead(proposed.id, ["vendor/model-a"])
@@ -129,7 +134,8 @@ async def test_a_message_with_only_an_image_can_be_sent(
     reply = await service.send(check.id, "  ", images=[PNG])
 
     assert reply.body == "A reply"
-    assert model.converse_calls[0]["message"] == NOTE.format(n=1, said="A described image.")
+    assert model.converse_calls[0]["message"] == ""
+    assert model.converse_images[0] == ["A described image."]
 
 
 @pytest.mark.parametrize(
@@ -160,3 +166,38 @@ async def test_deleting_a_check_removes_its_images(
     service.delete_check(check.id)
 
     assert store.list_attachments(said.id) == []
+
+
+# -- found in code review ------------------------------------------------------------------
+
+
+async def test_other_tabs_are_told_when_a_check_is_deleted(
+    service: CheckService, bus: EventBus
+) -> None:
+    check = await service.create_check(TEXT)
+    seen: list[Update] = []
+    bus.subscribe(seen.append)
+
+    service.delete_check(check.id)
+
+    assert seen == [ChatUpdated(check_id=check.id)]
+
+
+async def test_leads_proposed_when_the_list_is_full_are_said_to_have_been_left_out(
+    service: CheckService, store: Store, model: RecordingModel
+) -> None:
+    model.leads = [f"Lead {n}" for n in range(5)]
+    check = await service.create_check(TEXT)
+    for _ in range(20):
+        service.add_lead(check.id)
+    model.reply = ""
+    model.proposed = ["One more"]
+
+    reply = await service.send(check.id, "More?")
+
+    assert reply.status.value == "complete"
+    assert reply.body == (
+        "The list of waiting leads is full, so the leads proposed here were not added. "
+        "Research or remove some, then ask again."
+    )
+    assert len(store.list_draft_leads(check.id)) == 25

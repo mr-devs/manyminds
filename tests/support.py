@@ -98,6 +98,9 @@ class RecordingModel:
     """Each image shown to the model: its type, its bytes, and the model asked."""
     converse_calls: list[dict[str, Any]] = field(default_factory=list)
     converse_searches: list[SearchEngine] = field(default_factory=list)
+    decompose_images: list[list[str | None]] = field(default_factory=list)
+    converse_images: list[list[str | None]] = field(default_factory=list)
+    """What the attached images were said to show, as given with each call."""
     _reply_gate: asyncio.Event = field(default_factory=asyncio.Event)
     _decompose_gate: asyncio.Event = field(default_factory=asyncio.Event)
     research_calls: list[dict[str, Any]] = field(default_factory=list)
@@ -134,8 +137,10 @@ class RecordingModel:
         count: int,
         avoid: Sequence[str],
         model: str,
+        images: Sequence[str | None] = (),
         on_progress: ProgressCallback | None = None,
     ) -> Decomposition:
+        self.decompose_images.append(list(images))
         self.decompose_calls.append(
             {
                 "text": text,
@@ -167,8 +172,10 @@ class RecordingModel:
         *,
         model: str,
         search: SearchEngine = SearchEngine.EXA,
+        images: Sequence[str | None] = (),
         on_progress: ProgressCallback | None = None,
     ) -> ChatReply:
+        self.converse_images.append(list(images))
         self.converse_calls.append({"message": message, "context": context, "model": model})
         self.converse_searches.append(search)
         for step in self.steps:

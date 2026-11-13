@@ -107,7 +107,7 @@ async def test_an_image_can_be_sent_in_the_conversation_without_any_words(
     await user.should_see(marker="reply", content="A reply")
     await user.should_see("Read as: A receipt for 40 euros.")
     await user.should_not_see(marker="attachment-0")
-    assert "A receipt for 40 euros." in model.converse_calls[0]["message"]
+    assert model.converse_images[0] == ["A receipt for 40 euros."]
 
 
 async def test_a_file_name_with_markup_is_shown_as_plain_text(user: User) -> None:
