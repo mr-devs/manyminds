@@ -30,6 +30,7 @@ def build_services(
     model: ModelClient,
     research_models: Sequence[str],
     decompose_model: str,
+    chat_model: str | None = None,
     search_engine: SearchEngine = SearchEngine.EXA,
     notice: str = "",
     max_concurrent: int = 6,
@@ -37,7 +38,13 @@ def build_services(
     bus = EventBus()
     jobs = JobManager(store, model, bus, max_concurrent=max_concurrent)
     checks = CheckService(
-        store, model, jobs, decompose_model=decompose_model, search_engine=search_engine
+        store,
+        model,
+        jobs,
+        bus=bus,
+        decompose_model=decompose_model,
+        chat_model=chat_model or decompose_model,
+        search_engine=search_engine,
     )
     return Services(
         store=store,

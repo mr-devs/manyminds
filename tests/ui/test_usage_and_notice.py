@@ -8,7 +8,7 @@ from manyminds.core.models import Usage
 from manyminds.core.services import build_services
 from manyminds.core.storage import Store
 from manyminds.ui.app import build_root
-from support import RecordingModel
+from support import RecordingModel, start_all
 
 NOTICE = "Text you paste is sent to OpenRouter, the model provider and the Exa search engine."
 
@@ -17,9 +17,9 @@ async def open_thread(user: User, row: int) -> None:
     await user.open("/")
     user.find(marker="composer").type("The bridge opened in 1932.")
     user.find("Generate leads").click()
-    await user.should_see("Leads to research")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    await user.should_see(marker="lead-list")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
     with user.scope(marker=f"thread-row-{row}"):
         await user.should_see("Finished")
     user.find(marker=f"thread-row-{row}").click()

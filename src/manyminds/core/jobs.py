@@ -2,10 +2,12 @@
 
 import asyncio
 import logging
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from manyminds.core.errors import ModelError
-from manyminds.core.events import EventBus, JobUpdated
-from manyminds.core.models import ErrorKind, JobEventKind
+from manyminds.core.events import ChatUpdated, EventBus, JobUpdated
+from manyminds.core.models import ErrorKind, JobEventKind, JobStatus
 from manyminds.core.ports import ModelClient, Progress
 from manyminds.core.storage import Store
 
@@ -22,11 +24,19 @@ class JobManager:
         self._model = model
         self._bus = bus
         self._slots = asyncio.Semaphore(max_concurrent)
-        self._tasks: set[asyncio.Task[None]] = set()
+        self._tasks: set[asyncio.Task[Any]] = set()
+        self.on_settled: Callable[[str], None] | None = None
+        """Called with a check's id each time one of its research jobs has ended."""
 
     def start(self, job_id: str) -> None:
         """Schedule a queued job. Must be called from the running event loop."""
         task = asyncio.get_running_loop().create_task(self._run(job_id))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def spawn(self, work: Coroutine[Any, Any, object]) -> None:
+        """Run other background work, so that waiting until idle waits for it too."""
+        task = asyncio.get_running_loop().create_task(work)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -47,6 +57,22 @@ class JobManager:
             name = type(error).__name__
             logger.error("Job %s failed unexpectedly: %s", job_id, name)
             self._fail(job_id, ErrorKind.UNKNOWN, f"Unexpected error ({name})")
+        self._hand_back(job_id)
+
+    def _hand_back(self, job_id: str) -> None:
+        """Report in the check's conversation that this job has ended, and say so to whoever
+        decides what follows. Nothing that goes wrong here may escape the task."""
+        try:
+            job = self._store.get_job(job_id)
+            if job.status not in (JobStatus.DONE, JobStatus.FAILED):
+                return
+            check_id = self._store.get_thread(job.thread_id).check_id
+            self._store.add_handback(check_id, job_id)
+            self._bus.publish(ChatUpdated(check_id=check_id))
+            if self.on_settled is not None:
+                self.on_settled(check_id)
+        except Exception as error:
+            logger.error("Job %s could not hand back: %s", job_id, type(error).__name__)
 
     async def _research(self, job_id: str) -> None:
         job = self._store.get_job(job_id)
@@ -64,7 +90,7 @@ class JobManager:
             try:
                 result = await self._model.research(
                     thread.lead_text,
-                    check.source_text,
+                    self._store.source_for_lead(thread.lead_id),
                     job.instructions,
                     model=job.model,
                     search=job.search_engine,

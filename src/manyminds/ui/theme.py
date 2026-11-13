@@ -10,7 +10,7 @@ from datetime import datetime
 
 from nicegui import ui
 
-from manyminds.core.models import Check, ThreadStatus
+from manyminds.core.models import Check, ThreadStatus, Usage
 
 STATUS_TEXT = {
     ThreadStatus.QUEUED: "Queued",
@@ -87,6 +87,9 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
     overflow-wrap: anywhere;
 }
 .mm-side-date { font-size: 12px; color: var(--mm-tertiary); margin-top: 2px; }
+.mm-side-item .q-item__section--side { padding-left: 6px; }
+.mm-side-delete.q-btn { opacity: 0; transition: opacity 0.15s ease; }
+.mm-side-item:hover .mm-side-delete.q-btn, .mm-side-delete.q-btn:focus-visible { opacity: 1; }
 .mm-side-empty { font-size: 13px; color: var(--mm-tertiary); padding: 2px 10px; }
 
 /* One centred column for everything. */
@@ -145,7 +148,6 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 16px 48px rgba(0, 0, 0, 0.09);
 }
 .mm-composer textarea { font-size: 17px; line-height: 1.5; min-height: 84px; }
-.mm-composer .mm-instructions input { font-size: 14px; }
 .mm-composer-foot { border-top: 1px solid var(--mm-hairline); padding-top: 8px; margin-top: 4px; }
 .mm-field .q-field__control::before, .mm-field .q-field__control::after { display: none; }
 .mm-field .q-field__native, .mm-field .q-field__input { color: var(--mm-ink); }
@@ -178,10 +180,6 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
 .mm-lead:hover { border-color: #cfcfd6; }
 .mm-lead:focus-within { border-color: var(--mm-ink); box-shadow: 0 0 0 3px rgba(29, 29, 31, 0.07); }
 .mm-lead textarea { font-size: 16px; line-height: 1.5; padding: 8px 0; }
-.mm-lead-number {
-    font-size: 13px; color: var(--mm-tertiary); min-width: 18px; padding-top: 11px;
-    font-variant-numeric: tabular-nums;
-}
 .mm-lead .mm-icon { margin-top: 6px; }
 .mm-add.q-btn {
     width: 100%; margin-top: 10px; border: 1px dashed #cfcfd6; border-radius: 12px;
@@ -200,6 +198,145 @@ body { background: var(--mm-paper); color: var(--mm-ink); }
 .mm-picker .q-field__control {
     border-radius: 999px; padding: 0 16px; min-height: 40px; background: var(--mm-paper);
 }
+
+/* The check page: a conversation that scrolls, with the box to write in fixed beneath it. */
+.mm-chat-page { flex: 1 1 auto; min-height: 0; gap: 0; align-items: stretch; flex-wrap: nowrap; }
+.mm-chat-title {
+    font-size: 20px; line-height: 1.3; font-weight: 600; letter-spacing: -0.012em;
+    overflow-wrap: anywhere; padding-top: 4px;
+}
+.mm-chat {
+    flex: 1 1 auto; min-height: 0; width: 100%; margin-top: 18px;
+    border-top: 1px solid var(--mm-hairline);
+}
+.mm-chat .q-scrollarea__content { width: 100%; padding: 0; }
+.mm-chat-body { gap: 30px; padding: 30px 20px 36px 0; align-items: stretch; width: 100%; }
+.mm-turn { gap: 14px; align-items: stretch; width: 100%; }
+.mm-turn-user { align-items: flex-end; }
+/* What the user said sits to the right in a tinted shape; replies are plain, to the left. */
+.mm-bubble {
+    background: var(--mm-surface); border-radius: 20px 20px 6px 20px; padding: 14px 20px;
+    max-width: 84%; font-size: 16px; line-height: 1.55; color: var(--mm-ink);
+    white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.mm-say { font-size: 16px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mm-say-note { font-size: 14px; line-height: 1.5; color: var(--mm-secondary); }
+.mm-read {
+    background: var(--mm-surface); border-radius: 12px; padding: 14px 18px; gap: 0;
+    align-items: stretch;
+}
+.mm-read-text {
+    font-size: 14px; line-height: 1.6; color: #48484a; white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+/* Markdown written by a model, shown as formatted text. */
+.mm-md { gap: 10px; align-items: stretch; width: 100%; }
+.mm-md-p, .mm-md-line { white-space: pre-wrap; overflow-wrap: anywhere; }
+.mm-md-lines { gap: 2px; align-items: stretch; }
+.mm-md-line > * { display: inline; white-space: pre-wrap; }
+.mm-md-line > .mm-link { font-size: inherit; }
+.mm-md-bold { font-weight: 600; }
+.mm-md-italic { font-style: italic; }
+.mm-md-code {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.9em;
+    background: rgba(0, 0, 0, 0.055); border-radius: 4px; padding: 1px 5px;
+}
+.mm-md-h { font-weight: 600; letter-spacing: -0.01em; margin-top: 8px; }
+.mm-md-h1, .mm-md-h2 { font-size: 1.2em; }
+.mm-md-h3, .mm-md-h4, .mm-md-h5, .mm-md-h6 { font-size: 1.06em; }
+.mm-md-item { flex-wrap: nowrap; gap: 8px; align-items: flex-start; width: 100%; }
+.mm-md-item-body { gap: 2px; align-items: stretch; flex: 1 1 auto; min-width: 0; }
+.mm-md-marker {
+    flex: none; min-width: 20px; color: var(--mm-secondary); font-variant-numeric: tabular-nums;
+}
+.mm-md-indent-1 { padding-left: 24px; }
+.mm-md-indent-2 { padding-left: 48px; }
+.mm-md-indent-3 { padding-left: 72px; }
+.mm-md-pre {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em;
+    white-space: pre-wrap; overflow-wrap: anywhere; background: rgba(0, 0, 0, 0.045);
+    border-radius: 8px; padding: 10px 12px;
+}
+.mm-md-rule { margin: 4px 0; }
+.mm-md-under, .mm-md-quote { gap: 2px; align-items: stretch; }
+.mm-md-quote {
+    border-left: 3px solid var(--mm-hairline); margin-left: 2px; padding: 2px 0 2px 14px;
+    color: #3a3a3c;
+}
+.mm-md-quote.mm-md-indent-1 { margin-left: 30px; padding-left: 14px; }
+.mm-md-quote.mm-md-indent-2 { margin-left: 54px; padding-left: 14px; }
+.mm-md-quote.mm-md-indent-3 { margin-left: 78px; padding-left: 14px; }
+.mm-md-under.mm-md-indent-1 { padding-left: 28px; }
+.mm-md-under.mm-md-indent-2 { padding-left: 52px; }
+.mm-md-under.mm-md-indent-3 { padding-left: 76px; }
+.mm-passage-text.column, .mm-say.column { gap: 0; align-items: stretch; }
+/* A research thread handing back to the main conversation. */
+.mm-handback.q-expansion-item {
+    border: 1px solid var(--mm-hairline); border-radius: 12px; background: var(--mm-paper);
+}
+.mm-handback .q-item { padding: 10px 14px; min-height: 0; border-radius: 12px; }
+.mm-handback .q-focus-helper { display: none; }
+.mm-handback .q-expansion-item__content { padding: 4px 16px 16px; }
+.mm-handback-head { align-items: center; gap: 12px; flex-wrap: nowrap; width: 100%; }
+.mm-handback-lead { font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; flex: 1 1 auto; }
+.mm-handback-body { gap: 12px; align-items: stretch; font-size: 15px; line-height: 1.6; }
+.mm-findings { gap: 12px; align-items: stretch; font-size: 16px; line-height: 1.6; }
+.mm-unreturned { font-size: 13px; color: #3a3a3c; overflow-wrap: anywhere; }
+.mm-final { gap: 10px; align-items: stretch; }
+.mm-hidden { display: none !important; }
+/* Images waiting to be sent, and images already sent. */
+.mm-tray { gap: 8px; padding: 8px 0 2px; }
+.mm-chip {
+    align-items: center; gap: 8px; flex-wrap: nowrap; padding: 4px 6px 4px 4px;
+    background: var(--mm-surface); border-radius: 10px; max-width: 240px;
+}
+.mm-chip-thumb { width: 36px; height: 36px; border-radius: 7px; flex: none; }
+.mm-chip-name {
+    font-size: 13px; color: var(--mm-secondary); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mm-attached {
+    width: 280px; max-width: 84%; border-radius: 14px; border: 1px solid var(--mm-hairline);
+}
+.mm-read-as {
+    font-size: 13px; line-height: 1.5; color: var(--mm-secondary); max-width: 84%;
+    text-align: right; overflow-wrap: anywhere;
+}
+.mm-pending { align-items: center; gap: 10px; }
+.mm-steps { gap: 8px; align-items: stretch; }
+.mm-steps:empty { display: none; }
+.mm-how.q-expansion-item { margin: -4px 0; }
+.mm-how .q-item { padding: 0; min-height: 28px; font-size: 13px; color: var(--mm-secondary); }
+.mm-how .q-item__section--side { padding-left: 6px; min-width: 0; }
+.mm-how .q-expansion-item__content { padding: 8px 0 4px; }
+.mm-how .q-focus-helper { display: none; }
+.mm-reply-error { font-size: 14px; line-height: 1.5; color: var(--mm-failed); }
+.mm-go.q-btn {
+    background: var(--mm-ink) !important; color: var(--mm-paper) !important;
+    border-radius: 999px; padding: 0 16px; min-height: 30px; margin-top: 7px;
+    font-size: 13px; font-weight: 500; text-transform: none; letter-spacing: 0; flex: none;
+}
+.mm-go.q-btn:hover { background: #3a3a3c !important; }
+.mm-group-foot { align-items: center; gap: 10px; flex-wrap: nowrap; width: 100%; }
+.mm-group-foot .mm-add.q-btn { margin-top: 0; flex: 1 1 auto; width: auto; min-height: 38px; }
+.mm-chevron { color: var(--mm-tertiary); font-size: 20px; }
+.mm-leads .mm-thread.q-item { align-items: center; padding: 12px 10px 12px 16px; }
+.mm-leads .mm-thread .q-item__section--side { padding-top: 0; padding-left: 14px; }
+.mm-chat-notice { margin: 0 0 8px; }
+.mm-chat-composer {
+    margin: 10px 0 24px; border-radius: 20px; padding: 6px 10px 10px 20px; flex: none;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 28px rgba(0, 0, 0, 0.06);
+}
+.mm-chat-composer textarea { font-size: 16px; min-height: 0; max-height: 30vh; }
+.mm-chat-composer .mm-composer-foot { border-top: none; margin-top: 0; padding-top: 2px; }
+.mm-chat-composer .mm-picker { min-width: 0; flex: 0 1 auto; }
+.mm-chat-composer .mm-picker .q-field__control {
+    background: none; padding: 0; min-height: 32px; border-radius: 0;
+}
+.mm-chat-composer .mm-picker .q-field__native { font-size: 14px; color: var(--mm-ink); }
+.mm-chat-composer .mm-picker .q-field__control::before,
+.mm-chat-composer .mm-picker .q-field__control::after { display: none; }
+.mm-chat-composer .mm-button.q-btn { min-height: 36px; padding: 2px 20px; }
 
 /* Threads: one card per lead being researched. */
 .mm-threads { padding: 0; }
@@ -331,7 +468,7 @@ def sidebar(saved_checks: Callable[[], object]) -> None:
         saved_checks()
 
 
-def sidebar_checks(checks: Sequence[Check]) -> None:
+def sidebar_checks(checks: Sequence[Check], ask_delete: Callable[[str], object]) -> None:
     """The saved checks, newest first. Titles come from a model, so they are plain text."""
     if not checks:
         ui.label("No checks yet").classes("mm-side-empty")
@@ -343,11 +480,20 @@ def sidebar_checks(checks: Sequence[Check]) -> None:
                 ui.item(on_click=lambda target=target: ui.navigate.to(target))
                 .props("clickable")
                 .classes("mm-side-item")
-                .mark(f"sidebar-check-{index}"),
-                ui.item_section(),
+                .mark(f"sidebar-check-{index}")
             ):
-                ui.label(check.title).classes("mm-side-title")
-                ui.label(format_when(check.created_at.astimezone())).classes("mm-side-date")
+                with ui.item_section():
+                    ui.label(check.title).classes("mm-side-title")
+                    ui.label(format_when(check.created_at.astimezone())).classes("mm-side-date")
+                with ui.item_section().props("side"):
+                    # The click must not also open the check.
+                    (
+                        ui.button(icon="delete_outline")
+                        .on("click.stop", lambda check_id=check.id: ask_delete(check_id))
+                        .props('flat round dense size=sm aria-label="Delete check"')
+                        .classes("mm-icon mm-side-delete")
+                        .mark(f"sidebar-delete-{index}")
+                    )
 
 
 @contextmanager
@@ -359,6 +505,15 @@ def content(*, home: bool = False, tall: bool = False) -> Iterator[None]:
     extra = (" mm-home" if home else "") + (" mm-tall" if tall else "")
     with ui.column().classes("mm-column" + extra):
         yield
+
+
+def usage_line(usage: Usage | None) -> str | None:
+    """What a job used, as one line, or None when there is nothing to report."""
+    if usage is None or not (usage.searches or usage.input_tokens or usage.output_tokens):
+        return None
+    searches = "1 search" if usage.searches == 1 else f"{usage.searches} searches"
+    tokens = usage.input_tokens + usage.output_tokens
+    return f"{searches}, {tokens:,} tokens, ${usage.cost:.4f}"
 
 
 def status_label(status: ThreadStatus) -> ui.label:

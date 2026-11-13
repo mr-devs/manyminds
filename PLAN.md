@@ -247,6 +247,9 @@ the schema has none.
 | `grounded` | bool | URL was among the search tool's results for this job. |
 | `quote_matched` | bool or null | Quote found in the returned excerpt; null when no excerpt was returned. |
 
+*Superseded by decision 18: a check has one conversation, stored as `Message` rows (see
+milestone 1d). The design below was not built.*
+
 **Conversation**: `id`, `check_id`, `title` (from the first user message), `model`,
 `created_at`, `updated_at`.
 
@@ -366,14 +369,15 @@ update to this table.
 | 1a | Walking skeleton on the fake model | | **done 2026-11-11** |
 | 1b | Real research through OpenRouter | 0.1.0a1 | done; release pending |
 | 1c | Saved checks, sidebar, lead editing, redesign, lead prompt (owner's request, 2026-11-12) | | done |
-| 2 | Full lead-list controls | | not started |
+| 1d | The check as one conversation; a Go on each lead (owner's request, 2026-11-12; decision 18) | | done |
+| 2 | Full lead-list controls | | partly done in 1c and 1d |
 | 3 | Home, check page, persistence across restarts | 0.1.0a2 | not started |
 | 4 | Multiple models per lead | | not started |
 | 5 | Settings, key management, search-engine setting | | not started |
 | 6 | Error handling and retries | | not started |
 | 7 | First-run onboarding and disclosure | 0.1.0b1 | not started |
-| 8 | Conversations | | not started |
-| 9 | Leads from conversations | | not started |
+| 8 | Conversations | | done differently in 1d (decision 18) |
+| 9 | Leads from conversations | | done in 1d |
 | 10 | Hardening | 0.1.0 | not started |
 
 Adversarial tests are written in the milestone that introduces the behaviour they attack, not
@@ -500,6 +504,43 @@ Built ahead of the original order at the owner's request, taking parts of milest
   how much the text depends on them and how much it matters if they are wrong.
 - **Still to do from milestones 2 and 3:** Enter to generate, "Generate 5 more", reordering,
   renaming a check, "Resume all interrupted", and live updates of the sidebar across tabs.
+
+### Milestone 1d: the check as one conversation (owner's request, 2026-11-12)
+
+Recorded in decision 18. It replaces the separate lead editor and Threads list, and delivers
+milestones 8 and 9 in a different shape.
+
+- The check page is a chat. The first message is what the user pasted; the reply holds the
+  leads. There is one box and no separate instructions field. Enter sends and Shift+Enter
+  starts a new line.
+- Each lead has its own **Go**, can be reworded or removed, or left alone. A started lead
+  stays in place and becomes the way into its thread, with a live status. **Research all**
+  starts every lead in a list that has text. **Add a lead** is under every list.
+- Later messages are answered by the chat model from the conversation, the leads and the
+  finished reports. It has no search and gives no verdict. It may propose leads, which wait
+  as rows; nothing starts by itself.
+- New data: `Message` (`id`, `check_id`, `seq`, `role`, `status`, `body`, `error_message`,
+  `created_at`) and `Lead.message_id`. Schema version 3; older checks gain a conversation.
+- Links that will not open are looked for another way, and images are shown to the model
+  and described; the opening reply says what was read (decision 19).
+- Pressing **Generate leads** saves the check and moves into the conversation at once. The
+  leads are worked out in the background; each step (links opened, searches, images looked
+  at) is saved under the reply (`message_steps`, schema version 4), shown as it happens, and
+  kept afterwards under "How these leads were made". A failed attempt stays in the
+  conversation with **Try again**.
+- A check opens with five leads at most. A check can be deleted from the sidebar.
+- The conversation may search the web before it replies (decision 20).
+- Images can be pasted into the box or attached with a button, are kept with the message,
+  and are described by the model before leads or a reply are written (decision 21).
+- Markdown in an agent's thinking and notes, and in chat replies, is formatted by the app's
+  own reader (`ui/markdown.py`): headings, bold, italic, code, lists and web links. It builds
+  plain text elements only; images are never loaded and other markup stays as text.
+- Research is one call; each thread hands its findings back into the conversation, and the
+  conversation writes one report when every started lead has finished (decision 22). Links
+  the search never returned are listed; quotes are no longer checked.
+- **Not done:** recording the cost of chat replies; retrying a failed reply with one press
+  (send the message again); choosing the chat model (it is the lead-generation model);
+  "Generate more leads" as a button (ask for more in the chat).
 
 ### Milestone 2: full lead-list controls
 

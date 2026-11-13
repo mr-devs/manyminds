@@ -1,5 +1,6 @@
 """SQLite storage for checks and everything that follows from them."""
 
+import json
 import sqlite3
 import threading
 import uuid
@@ -10,8 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from manyminds.core.models import (
+    Attachment,
     Check,
     ErrorKind,
+    ImageFile,
     Job,
     JobEvent,
     JobEventKind,
@@ -19,10 +22,16 @@ from manyminds.core.models import (
     Lead,
     LeadOrigin,
     LeadState,
+    Message,
+    MessageKind,
+    MessageRole,
+    MessageStatus,
+    MessageStep,
     Report,
     SearchEngine,
     Thread,
     Usage,
+    as_read,
 )
 
 # Each entry moves the schema forward by one version. Never edit an entry that has shipped;
@@ -82,6 +91,65 @@ MIGRATIONS: Sequence[str] = (
     );
     """,
     "ALTER TABLE jobs ADD COLUMN usage TEXT;",
+    # Each check becomes a conversation. Checks made before this get the two messages a new
+    # check starts with: what the user pasted, and a reply that holds the leads.
+    """
+    CREATE TABLE messages (
+        id TEXT PRIMARY KEY,
+        check_id TEXT NOT NULL REFERENCES checks(id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL,
+        role TEXT NOT NULL,
+        status TEXT NOT NULL,
+        body TEXT NOT NULL,
+        error_message TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE (check_id, seq)
+    );
+    ALTER TABLE leads ADD COLUMN message_id TEXT REFERENCES messages(id) ON DELETE CASCADE;
+    INSERT INTO messages (id, check_id, seq, role, status, body, created_at)
+        SELECT lower(hex(randomblob(16))), id, 1, 'user', 'complete',
+               source_text || CASE WHEN instructions = '' THEN ''
+                                   ELSE char(10) || char(10) || instructions END,
+               created_at
+        FROM checks;
+    INSERT INTO messages (id, check_id, seq, role, status, body, created_at)
+        SELECT lower(hex(randomblob(16))), id, 2, 'assistant', 'complete', '', created_at
+        FROM checks;
+    UPDATE leads SET message_id = (
+        SELECT messages.id FROM messages
+        WHERE messages.check_id = leads.check_id AND messages.seq = 2
+    );
+    """,
+    """
+    CREATE TABLE message_steps (
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        seq INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        detail TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (message_id, seq)
+    );
+    """,
+    """
+    CREATE TABLE attachments (
+        id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        media_type TEXT NOT NULL,
+        data BLOB NOT NULL,
+        description TEXT
+    );
+    """,
+    """
+    ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'reply';
+    ALTER TABLE messages ADD COLUMN job_id TEXT REFERENCES jobs(id) ON DELETE CASCADE;
+    """,
+)
+
+STOPPED = "Stopped because the app was closed."
+READ_FROM_LINKS = (
+    "What the app read from the links in this text. Image descriptions were written by a "
+    "model and may be wrong; they are not evidence."
 )
 
 
@@ -169,9 +237,16 @@ class Store:
         )
 
     def create_check_with_leads(
-        self, *, title: str, source_text: str, instructions: str, leads: Sequence[str]
+        self,
+        *,
+        title: str,
+        source_text: str,
+        instructions: str,
+        leads: Sequence[str],
+        seen: str = "",
     ) -> Check:
-        """Save a check and its generated leads together, or not at all."""
+        """Save a check, the message that opened it and the reply holding its leads, together
+        or not at all."""
         check_id, stamp = uuid.uuid4().hex, self._stamp()
         with self._transaction() as db:
             db.execute(
@@ -179,9 +254,47 @@ class Store:
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (check_id, title, source_text, instructions, stamp, stamp),
             )
+            self._insert_message(
+                db, check_id, MessageRole.USER, MessageStatus.COMPLETE, source_text
+            )
+            reply_id = self._insert_message(
+                db, check_id, MessageRole.ASSISTANT, MessageStatus.COMPLETE, seen
+            )
             for text in leads:
-                self._insert_lead(db, check_id, text, LeadOrigin.GENERATED)
+                self._insert_lead(db, check_id, text, LeadOrigin.GENERATED, reply_id)
         return self.get_check(check_id)
+
+    def open_check(
+        self,
+        *,
+        title: str,
+        source_text: str,
+        instructions: str = "",
+        images: Sequence[ImageFile] = (),
+    ) -> Message:
+        """Save a check with the message that opened it and a reply still to come. Returns
+        that reply."""
+        check_id, stamp = uuid.uuid4().hex, self._stamp()
+        with self._transaction() as db:
+            db.execute(
+                "INSERT INTO checks (id, title, source_text, instructions, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (check_id, title, source_text, instructions, stamp, stamp),
+            )
+            said_id = self._insert_message(
+                db, check_id, MessageRole.USER, MessageStatus.COMPLETE, source_text
+            )
+            self._insert_attachments(db, said_id, images)
+            reply_id = self._insert_message(
+                db, check_id, MessageRole.ASSISTANT, MessageStatus.PENDING, ""
+            )
+        return self.get_message(reply_id)
+
+    def rename_check(self, check_id: str, title: str) -> None:
+        self._write(
+            "UPDATE checks SET title = ?, updated_at = ? WHERE id = ?",
+            (title, self._stamp(), check_id),
+        )
 
     def get_check(self, check_id: str) -> Check:
         row = self._one("SELECT * FROM checks WHERE id = ?", (check_id,), f"check {check_id}")
@@ -198,28 +311,41 @@ class Store:
 
     # -- leads ------------------------------------------------------------------------
 
-    def add_lead(self, check_id: str, text: str, origin: LeadOrigin) -> Lead:
+    def add_lead(
+        self, check_id: str, text: str, origin: LeadOrigin, message_id: str | None = None
+    ) -> Lead:
         with self._transaction() as db:
-            lead_id = self._insert_lead(db, check_id, text, origin)
-        return self._get_lead(lead_id)
+            lead_id = self._insert_lead(db, check_id, text, origin, message_id)
+        return self.get_lead(lead_id)
 
     def _insert_lead(
-        self, db: sqlite3.Connection, check_id: str, text: str, origin: LeadOrigin
+        self,
+        db: sqlite3.Connection,
+        check_id: str,
+        text: str,
+        origin: LeadOrigin,
+        message_id: str | None = None,
     ) -> str:
         lead_id = uuid.uuid4().hex
         (position,) = db.execute(
             "SELECT COALESCE(MAX(position), -1) + 1 FROM leads WHERE check_id = ?", (check_id,)
         ).fetchone()
         db.execute(
-            "INSERT INTO leads (id, check_id, text, position, origin, state, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (lead_id, check_id, text, position, origin, LeadState.DRAFT, self._stamp()),
+            "INSERT INTO leads "
+            "(id, check_id, text, position, origin, state, created_at, message_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (lead_id, check_id, text, position, origin, LeadState.DRAFT, self._stamp(), message_id),
         )
         return lead_id
 
-    def _get_lead(self, lead_id: str) -> Lead:
+    def get_lead(self, lead_id: str) -> Lead:
         row = self._one("SELECT * FROM leads WHERE id = ?", (lead_id,), f"lead {lead_id}")
         return Lead.model_validate(dict(row))
+
+    def list_leads(self, check_id: str) -> list[Lead]:
+        """Every lead on a check, waiting or launched, in order."""
+        rows = self._all("SELECT * FROM leads WHERE check_id = ? ORDER BY position", (check_id,))
+        return [Lead.model_validate(dict(row)) for row in rows]
 
     def list_draft_leads(self, check_id: str) -> list[Lead]:
         rows = self._all(
@@ -248,8 +374,20 @@ class Store:
 
     def launch_lead(self, lead_id: str) -> Thread:
         with self._transaction() as db:
-            thread_id = self._launch(db, self._get_lead(lead_id))
+            thread_id = self._launch(db, self.get_lead(lead_id))
         return self.get_thread(thread_id)
+
+    def launch_one_lead(
+        self, lead_id: str, *, models: Sequence[str], search_engine: SearchEngine, instructions: str
+    ) -> tuple[Thread, list[Job]]:
+        """Turn one draft lead into a thread with one queued job per model, all or nothing."""
+        with self._transaction() as db:
+            thread_id = self._launch(db, self.get_lead(lead_id))
+            job_ids = [
+                self._insert_job(db, thread_id, model, search_engine, instructions)
+                for model in models
+            ]
+        return self.get_thread(thread_id), [self.get_job(job_id) for job_id in job_ids]
 
     def _launch(self, db: sqlite3.Connection, lead: Lead) -> str:
         if lead.state is not LeadState.DRAFT:
@@ -385,7 +523,7 @@ class Store:
         Nothing is running when the app has only just started, so any such job was cut off
         when the app last closed. It is left for the user to try again.
         """
-        message = "Stopped because the app was closed."
+        message = STOPPED
         stamp = self._now()
         with self._transaction() as db:
             rows = db.execute(
@@ -418,7 +556,201 @@ class Store:
 
     def get_report(self, job_id: str) -> Report | None:
         rows = self._all("SELECT body FROM reports WHERE job_id = ?", (job_id,))
-        return Report.model_validate_json(rows[0]["body"]) if rows else None
+        return _report(rows[0]["body"]) if rows else None
+
+    # -- conversation -----------------------------------------------------------------
+
+    def _insert_message(
+        self,
+        db: sqlite3.Connection,
+        check_id: str,
+        role: MessageRole,
+        status: MessageStatus,
+        body: str,
+        kind: MessageKind = MessageKind.REPLY,
+        job_id: str | None = None,
+    ) -> str:
+        message_id = uuid.uuid4().hex
+        (seq,) = db.execute(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM messages WHERE check_id = ?", (check_id,)
+        ).fetchone()
+        db.execute(
+            "INSERT INTO messages "
+            "(id, check_id, seq, role, status, body, created_at, kind, job_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (message_id, check_id, seq, role, status, body, self._stamp(), kind, job_id),
+        )
+        return message_id
+
+    def add_handback(self, check_id: str, job_id: str) -> Message:
+        """Note in the conversation that a research job has finished, whichever way."""
+        with self._transaction() as db:
+            message_id = self._insert_message(
+                db,
+                check_id,
+                MessageRole.ASSISTANT,
+                MessageStatus.COMPLETE,
+                "",
+                MessageKind.HANDBACK,
+                job_id,
+            )
+        return self.get_message(message_id)
+
+    def begin_report(self, check_id: str) -> Message:
+        """Save a place for the report on a check's research, still to be written."""
+        with self._transaction() as db:
+            message_id = self._insert_message(
+                db,
+                check_id,
+                MessageRole.ASSISTANT,
+                MessageStatus.PENDING,
+                "",
+                MessageKind.REPORT,
+            )
+        return self.get_message(message_id)
+
+    def get_message(self, message_id: str) -> Message:
+        row = self._one(
+            "SELECT * FROM messages WHERE id = ?", (message_id,), f"message {message_id}"
+        )
+        return Message.model_validate(dict(row))
+
+    def list_messages(self, check_id: str) -> list[Message]:
+        rows = self._all("SELECT * FROM messages WHERE check_id = ? ORDER BY seq", (check_id,))
+        return [Message.model_validate(dict(row)) for row in rows]
+
+    # -- images -----------------------------------------------------------------------
+
+    def _insert_attachments(
+        self, db: sqlite3.Connection, message_id: str, images: Sequence[ImageFile]
+    ) -> None:
+        for position, image in enumerate(images):
+            db.execute(
+                "INSERT INTO attachments (id, message_id, position, media_type, data) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (uuid.uuid4().hex, message_id, position, image.media_type, image.data),
+            )
+
+    def list_attachments(self, message_id: str) -> list[Attachment]:
+        rows = self._all(
+            "SELECT * FROM attachments WHERE message_id = ? ORDER BY position", (message_id,)
+        )
+        return [Attachment.model_validate(dict(row)) for row in rows]
+
+    def describe_attachment(self, attachment_id: str, description: str) -> None:
+        self._write(
+            "UPDATE attachments SET description = ? WHERE id = ?", (description, attachment_id)
+        )
+
+    def list_image_descriptions(self, message_id: str) -> list[str | None]:
+        """What each image attached to a message was said to show, without loading the
+        images themselves."""
+        rows = self._all(
+            "SELECT description FROM attachments WHERE message_id = ? ORDER BY position",
+            (message_id,),
+        )
+        return [row["description"] for row in rows]
+
+    def message_as_read(self, message: Message) -> str:
+        """A message's words together with what its attached images were taken to show."""
+        return as_read(message.body, self.list_image_descriptions(message.id))
+
+    def source_for_lead(self, lead_id: str) -> str:
+        """What the user had said when a lead was put forward: every message of theirs up to
+        the reply the lead is listed under. For a lead under the opening reply, and for one
+        under no reply, that is the text the check began with."""
+        lead = self.get_lead(lead_id)
+        rows = self._all(
+            "SELECT said.* FROM messages AS said JOIN messages AS reply "
+            "ON reply.check_id = said.check_id AND said.seq < reply.seq "
+            "WHERE reply.id = ? AND said.role = ? ORDER BY said.seq",
+            (lead.message_id, MessageRole.USER),
+        )
+        if not rows:
+            return self.get_check(lead.check_id).source_text
+        said = "\n\n".join(self.message_as_read(Message.model_validate(dict(row))) for row in rows)
+        # The opening reply holds what was read from the links in the first message.
+        opening = self._all(
+            "SELECT body FROM messages WHERE check_id = ? AND seq = 2 AND role = ?",
+            (lead.check_id, MessageRole.ASSISTANT),
+        )
+        if opening and opening[0]["body"]:
+            said += f"\n\n{READ_FROM_LINKS}\n{opening[0]['body']}"
+        return said
+
+    def begin_turn(self, check_id: str, body: str, images: Sequence[ImageFile] = ()) -> Message:
+        """Save what the user said, with any images, and a reply that is still to come.
+        Returns that reply."""
+        with self._transaction() as db:
+            said_id = self._insert_message(
+                db, check_id, MessageRole.USER, MessageStatus.COMPLETE, body
+            )
+            self._insert_attachments(db, said_id, images)
+            reply_id = self._insert_message(
+                db, check_id, MessageRole.ASSISTANT, MessageStatus.PENDING, ""
+            )
+        return self.get_message(reply_id)
+
+    def finish_message(
+        self,
+        message_id: str,
+        body: str,
+        leads: Sequence[str] = (),
+        origin: LeadOrigin = LeadOrigin.CONVERSATION,
+    ) -> Message:
+        """Fill in a reply and list its leads under it, together or not at all."""
+        with self._transaction() as db:
+            message = self.get_message(message_id)
+            db.execute(
+                "UPDATE messages SET status = ?, body = ?, error_message = NULL WHERE id = ?",
+                (MessageStatus.COMPLETE, body, message_id),
+            )
+            for text in leads:
+                self._insert_lead(db, message.check_id, text, origin, message_id)
+        return self.get_message(message_id)
+
+    def fail_message(self, message_id: str, error_message: str) -> Message:
+        self._write(
+            "UPDATE messages SET status = ?, error_message = ? WHERE id = ?",
+            (MessageStatus.FAILED, error_message, message_id),
+        )
+        return self.get_message(message_id)
+
+    def reopen_message(self, message_id: str) -> Message:
+        """Mark a failed reply as awaited again, for another attempt."""
+        self._write(
+            "UPDATE messages SET status = ?, error_message = NULL WHERE id = ? AND status = ?",
+            (MessageStatus.PENDING, message_id, MessageStatus.FAILED),
+        )
+        return self.get_message(message_id)
+
+    def add_message_step(self, message_id: str, kind: JobEventKind, detail: str = "") -> None:
+        with self._transaction() as db:
+            (seq,) = db.execute(
+                "SELECT COALESCE(MAX(seq), 0) + 1 FROM message_steps WHERE message_id = ?",
+                (message_id,),
+            ).fetchone()
+            db.execute(
+                "INSERT INTO message_steps (message_id, seq, kind, detail, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (message_id, seq, kind, detail, self._stamp()),
+            )
+
+    def list_message_steps(self, message_id: str, *, after: int = 0) -> list[MessageStep]:
+        """The steps taken for a reply, in order, optionally only those numbered above
+        `after`."""
+        rows = self._all(
+            "SELECT * FROM message_steps WHERE message_id = ? AND seq > ? ORDER BY seq",
+            (message_id, after),
+        )
+        return [MessageStep.model_validate(dict(row)) for row in rows]
+
+    def fail_pending_messages(self) -> int:
+        """Mark every reply still awaited as stopped. Call once, at start-up."""
+        return self._write(
+            "UPDATE messages SET status = ?, error_message = ? WHERE status = ?",
+            (MessageStatus.FAILED, STOPPED, MessageStatus.PENDING),
+        )
 
     # -- job events -------------------------------------------------------------------
 
@@ -451,6 +783,25 @@ class Store:
             "SELECT * FROM job_events WHERE job_id = ? AND seq > ? ORDER BY seq", (job_id, after)
         )
         return [JobEvent.model_validate(dict(row)) for row in rows]
+
+
+def _report(body: str) -> Report:
+    """A stored report. Ones saved before reports became an agent's own notes held a
+    summary, quoted evidence and what was not determined; those are written out as notes."""
+    stored = json.loads(body)
+    if "notes" in stored:
+        return Report.model_validate(stored)
+    lines = [str(stored.get("summary", "")), ""]
+    for item in stored.get("evidence", []):
+        lines.append(f"- {item.get('stance', '')}: {item.get('title') or ''} {item.get('url', '')}")
+        lines.append(f'  "{item.get("quote", "")}"')
+    lines += ["", f"Could not be determined: {stored.get('undetermined', '')}"]
+    unreturned = [
+        str(item["url"])
+        for item in stored.get("evidence", [])
+        if not item.get("grounded") and item.get("url")
+    ]
+    return Report(notes="\n".join(lines).strip() or "(empty)", unreturned_links=unreturned)
 
 
 def _job(row: sqlite3.Row) -> Job:

@@ -6,15 +6,18 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from manyminds.core.models import (
-    EvidenceItem,
-    JobEventKind,
-    Report,
-    SearchEngine,
-    Stance,
-    Usage,
+from nicegui import ElementFilter
+from nicegui.testing import User
+
+from manyminds.core.models import JobEventKind, Report, SearchEngine, Usage
+from manyminds.core.ports import (
+    ChatContext,
+    ChatReply,
+    Decomposition,
+    Progress,
+    ProgressCallback,
+    ResearchResult,
 )
-from manyminds.core.ports import Decomposition, Progress, ProgressCallback, ResearchResult
 
 
 async def until(condition: Callable[[], bool], timeout: float = 2.0) -> None:
@@ -27,20 +30,15 @@ async def until(condition: Callable[[], bool], timeout: float = 2.0) -> None:
         await asyncio.sleep(0)
 
 
+def start_all(user: User) -> None:
+    """Start research on every waiting lead: "Research all", or Go when there is only one."""
+    with user:
+        several = list(ElementFilter(marker="research-all"))
+    user.find(marker="research-all" if several else "go").click()
+
+
 def report_for(lead: str) -> Report:
-    return Report(
-        summary=f"Findings about: {lead}",
-        evidence=[
-            EvidenceItem(
-                url="https://example.org/source",
-                title="Source",
-                quote=f"A passage relevant to {lead}",
-                stance=Stance.SUPPORTS,
-                grounded=True,
-            )
-        ],
-        undetermined="Nothing further was checked.",
-    )
+    return Report(notes=f"Findings about: {lead}")
 
 
 @dataclass
@@ -49,7 +47,13 @@ class RecordingModel:
 
     title: str = "A title"
     leads: Sequence[str] = ("First lead", "Second lead")
+    seen: str = ""
+    """What lead generation reports having read from links and images."""
     decompose_error: Exception | None = None
+    hold_decompose: bool = False
+    """When true, lead generation waits until the test calls release_decompose()."""
+    steps: Sequence[Progress] = ()
+    """Progress reported while leads are generated or a reply is written."""
     failures: dict[str, Exception] = field(default_factory=dict)
     reports: dict[str, Report] = field(default_factory=dict)
     usages: dict[str, Usage] = field(default_factory=dict)
@@ -60,7 +64,33 @@ class RecordingModel:
     hold: bool = False
     """When true, each research call waits until the test calls release()."""
 
+    reply: str = "A reply"
+    """What the chat model says back."""
+    proposed: Sequence[str] = ()
+    """Leads the chat model proposes with its reply."""
+    converse_error: Exception | None = None
+    hold_reply: bool = False
+    """When true, the chat reply waits until the test calls release_reply()."""
+
     decompose_calls: list[dict[str, Any]] = field(default_factory=list)
+    final_report: str = "The report."
+    """What the model writes once every started lead has finished."""
+    report_leads: Sequence[str] = ()
+    report_error: Exception | None = None
+    hold_report: bool = False
+    report_calls: list[dict[str, Any]] = field(default_factory=list)
+    _report_gate: asyncio.Event = field(default_factory=asyncio.Event)
+    image_description: str = "A described image."
+    image_error: Exception | None = None
+    image_calls: list[tuple[str, bytes, str]] = field(default_factory=list)
+    """Each image shown to the model: its type, its bytes, and the model asked."""
+    converse_calls: list[dict[str, Any]] = field(default_factory=list)
+    converse_searches: list[SearchEngine] = field(default_factory=list)
+    decompose_images: list[list[str | None]] = field(default_factory=list)
+    converse_images: list[list[str | None]] = field(default_factory=list)
+    """What the attached images were said to show, as given with each call."""
+    _reply_gate: asyncio.Event = field(default_factory=asyncio.Event)
+    _decompose_gate: asyncio.Event = field(default_factory=asyncio.Event)
     research_calls: list[dict[str, Any]] = field(default_factory=list)
     active: int = 0
     max_active: int = 0
@@ -72,14 +102,38 @@ class RecordingModel:
     def release(self, lead: str) -> None:
         self._gate(lead).set()
 
+    def release_reply(self) -> None:
+        self._reply_gate.set()
+
+    def release_report(self) -> None:
+        self._report_gate.set()
+
+    def release_decompose(self) -> None:
+        self._decompose_gate.set()
+
     def release_all(self) -> None:
         self.hold = False
+        self.hold_reply = False
+        self.hold_decompose = False
+        self.hold_report = False
+        self._report_gate.set()
+        self._reply_gate.set()
+        self._decompose_gate.set()
         for gate in self._gates.values():
             gate.set()
 
     async def decompose(
-        self, text: str, instructions: str, *, count: int, avoid: Sequence[str], model: str
+        self,
+        text: str,
+        instructions: str,
+        *,
+        count: int,
+        avoid: Sequence[str],
+        model: str,
+        images: Sequence[str | None] = (),
+        on_progress: ProgressCallback | None = None,
     ) -> Decomposition:
+        self.decompose_images.append(list(images))
         self.decompose_calls.append(
             {
                 "text": text,
@@ -89,9 +143,56 @@ class RecordingModel:
                 "model": model,
             }
         )
+        for step in self.steps:
+            if on_progress is not None:
+                on_progress(step)
+        if self.hold_decompose:
+            await self._decompose_gate.wait()
         if self.decompose_error is not None:
             raise self.decompose_error
-        return Decomposition(title=self.title, leads=list(self.leads))
+        return Decomposition(title=self.title, leads=list(self.leads), seen=self.seen)
+
+    async def describe_image(self, media_type: str, data: bytes, *, model: str) -> str:
+        self.image_calls.append((media_type, data, model))
+        if self.image_error is not None:
+            raise self.image_error
+        return self.image_description
+
+    async def converse(
+        self,
+        message: str,
+        context: ChatContext,
+        *,
+        model: str,
+        search: SearchEngine = SearchEngine.EXA,
+        images: Sequence[str | None] = (),
+        on_progress: ProgressCallback | None = None,
+    ) -> ChatReply:
+        self.converse_images.append(list(images))
+        self.converse_calls.append({"message": message, "context": context, "model": model})
+        self.converse_searches.append(search)
+        for step in self.steps:
+            if on_progress is not None:
+                on_progress(step)
+        if self.hold_reply:
+            await self._reply_gate.wait()
+        if self.converse_error is not None:
+            raise self.converse_error
+        return ChatReply(body=self.reply, leads=list(self.proposed))
+
+    async def write_report(
+        self,
+        context: ChatContext,
+        *,
+        model: str,
+        on_progress: ProgressCallback | None = None,
+    ) -> ChatReply:
+        self.report_calls.append({"context": context, "model": model})
+        if self.hold_report:
+            await self._report_gate.wait()
+        if self.report_error is not None:
+            raise self.report_error
+        return ChatReply(body=self.final_report, leads=list(self.report_leads))
 
     async def research(
         self,

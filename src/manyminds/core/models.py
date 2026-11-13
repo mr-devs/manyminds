@@ -1,5 +1,7 @@
 """Domain models."""
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated
@@ -20,37 +22,19 @@ def _require_web_url(value: str) -> str:
 WebUrl = Annotated[NonBlank, AfterValidator(_require_web_url)]
 
 
-MAX_QUOTE_LENGTH = 2000
-
-
-class Stance(StrEnum):
-    """How one quoted passage bears on the lead. Not a judgement on the claim."""
-
-    SUPPORTS = "supports"
-    UNDERMINES = "undermines"
-
-
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class EvidenceItem(_Strict):
-    url: WebUrl
-    title: str | None = None
-    quote: Annotated[NonBlank, StringConstraints(max_length=MAX_QUOTE_LENGTH)]
-    stance: Stance
-    grounded: bool = False
-    """The URL was among the results the search tool returned for this job."""
-    quote_matched: bool | None = None
-    """The quote was found in the returned excerpt; None when there was no excerpt."""
-
-
 class Report(_Strict):
-    """Structured evidence for the user to judge. Deliberately has no verdict."""
+    """What a research agent hands back to the main conversation: its findings, as it wrote
+    them. There is no verdict field; the agent is told to give none."""
 
-    summary: NonBlank
-    evidence: list[EvidenceItem]
-    undetermined: NonBlank
+    notes: NonBlank
+    """Markdown. Shown formatted, never as markup."""
+    unreturned_links: list[str] = []
+    """Web addresses written in the notes that neither the search nor a page the agent
+    opened returned. They are flagged for the user, since the agent may have made them up."""
 
 
 class SearchEngine(StrEnum):
@@ -67,6 +51,25 @@ class LeadOrigin(StrEnum):
 class LeadState(StrEnum):
     DRAFT = "draft"
     LAUNCHED = "launched"
+
+
+class MessageRole(StrEnum):
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+class MessageKind(StrEnum):
+    REPLY = "reply"
+    HANDBACK = "handback"
+    """A research thread reporting back. Its content is the thread's job, not a body."""
+    REPORT = "report"
+    """The report written once every started lead has finished."""
+
+
+class MessageStatus(StrEnum):
+    PENDING = "pending"
+    COMPLETE = "complete"
+    FAILED = "failed"
 
 
 class JobStatus(StrEnum):
@@ -96,6 +99,8 @@ class JobEventKind(StrEnum):
     READING = "reading"
     SOURCES_FOUND = "sources_found"
     MESSAGE = "message"
+    NOTE = "note"
+    """A step described in the app's own words."""
     WRITING = "writing"
     RETRYING = "retrying"
     FINISHED = "finished"
@@ -137,6 +142,24 @@ class Lead(_Record):
     origin: LeadOrigin
     state: LeadState
     created_at: datetime
+    message_id: str | None = None
+    """The reply in the conversation that this lead is listed under."""
+
+
+class Message(_Record):
+    """One turn in a check's conversation. A reply may have leads listed under it."""
+
+    id: str
+    check_id: str
+    seq: int
+    role: MessageRole
+    status: MessageStatus
+    body: str
+    error_message: str | None
+    created_at: datetime
+    kind: MessageKind = MessageKind.REPLY
+    job_id: str | None = None
+    """For a hand-back, the research job that finished."""
 
 
 class Thread(_Record):
@@ -172,6 +195,52 @@ class JobEvent(_Record):
     """One entry in a job's transcript: a step, the model's thinking, or what it wrote."""
 
     job_id: str
+    seq: int
+    kind: JobEventKind
+    detail: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class ImageFile:
+    """An image the user attached, as it arrived."""
+
+    media_type: str
+    data: bytes
+
+
+class Attachment(_Record):
+    """An image kept with the message it was attached to."""
+
+    id: str
+    message_id: str
+    position: int
+    media_type: str
+    data: bytes
+    description: str | None
+    """What a model said the image shows. None until it has been looked at, or if it could
+    not be."""
+
+
+def as_read(body: str, descriptions: Sequence[str | None]) -> str:
+    """A message as the models are given it: its words, then what each attached image was
+    taken to show. A description is a model's reading, and is labelled as one."""
+    parts = [body] if body.strip() else []
+    for number, description in enumerate(descriptions, start=1):
+        if description is None:
+            parts.append(f"[Attached image {number} could not be looked at.]")
+        else:
+            parts.append(
+                f"[Attached image {number}, as described by a model that looked at it (the "
+                f"description may be wrong): {description}]"
+            )
+    return "\n\n".join(parts)
+
+
+class MessageStep(_Record):
+    """One step taken while a reply was being worked out, such as a page being opened."""
+
+    message_id: str
     seq: int
     kind: JobEventKind
     detail: str

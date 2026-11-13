@@ -176,3 +176,59 @@ def test_starting_marks_work_cut_off_last_time_as_interrupted(
 
     job = served["services"].store.get_job(jobs[0].id)
     assert job.error_kind is ErrorKind.INTERRUPTED
+
+
+def test_starting_marks_a_reply_cut_off_last_time_as_stopped(
+    served: dict[str, Any], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from manyminds.core.models import MessageStatus
+    from manyminds.core.paths import open_store
+
+    earlier = open_store(tmp_path / "data")
+    check = earlier.create_check_with_leads(
+        title="T", source_text="Some text.", instructions="", leads=["Lead A"]
+    )
+    awaited = earlier.begin_turn(check.id, "Summarise.")
+    earlier.close()
+    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+
+    cli.main([])
+
+    reply = served["services"].store.get_message(awaited.id)
+    assert reply.status is MessageStatus.FAILED
+    assert reply.error_message == "Stopped because the app was closed."
+
+
+def test_a_database_that_fails_on_first_use_gets_the_short_message(
+    served: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import sqlite3
+
+    folder = tmp_path / "data"
+    folder.mkdir()
+    # Marked as up to date, so opening it succeeds, but its tables are not there.
+    with sqlite3.connect(folder / "manyminds.db") as raw:
+        raw.execute("PRAGMA user_version = 99")
+    raw.close()
+    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+
+    status = cli.main([])
+
+    assert status == 1
+    assert "The saved checks could not be opened" in capsys.readouterr().err
+    assert "services" not in served
+
+
+def test_a_data_folder_that_cannot_be_worked_out_gets_the_short_message(
+    served: dict[str, Any], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("MANYMINDS_DATA_DIR", "~no-such-user-here/data")
+    monkeypatch.setenv("OPENROUTER_API_KEY", KEY)
+
+    status = cli.main([])
+
+    assert status == 1
+    assert "The data folder could not be used" in capsys.readouterr().err

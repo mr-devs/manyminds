@@ -2,7 +2,7 @@
 
 from manyminds.core.checks import CheckService
 from manyminds.core.errors import ModelError
-from manyminds.core.events import EventBus, JobUpdated
+from manyminds.core.events import ChatUpdated, EventBus, JobUpdated, Update
 from manyminds.core.jobs import JobManager
 from manyminds.core.models import (
     ErrorKind,
@@ -179,7 +179,8 @@ async def test_every_status_change_is_saved_before_it_is_announced(
 ) -> None:
     seen: list[tuple[str, JobStatus]] = []
 
-    def record(event: JobUpdated) -> None:
+    def record(event: Update) -> None:
+        assert isinstance(event, JobUpdated)
         seen.append((event.job_id, store.get_job(event.job_id).status))
 
     bus.subscribe(record)
@@ -198,19 +199,23 @@ async def test_every_status_change_is_saved_before_it_is_announced(
 async def test_announcements_say_which_check_and_thread_changed(
     service: CheckService, store: Store, model: RecordingModel, jobs: JobManager, bus: EventBus
 ) -> None:
-    events: list[JobUpdated] = []
+    events: list[Update] = []
     bus.subscribe(events.append)
     (thread,) = await launched(service, model, "Lead A")
 
     await jobs.wait_until_idle()
 
-    assert {(event.check_id, event.thread_id) for event in events} == {(thread.check_id, thread.id)}
+    assert {
+        (event.check_id, event.thread_id) for event in events if isinstance(event, JobUpdated)
+    } == {(thread.check_id, thread.id)}
+    # The job ending is also announced to the check's conversation.
+    assert ChatUpdated(check_id=thread.check_id) in events
 
 
 async def test_unsubscribed_listeners_hear_nothing_more(
     service: CheckService, model: RecordingModel, jobs: JobManager, bus: EventBus
 ) -> None:
-    events: list[JobUpdated] = []
+    events: list[Update] = []
     unsubscribe = bus.subscribe(events.append)
     unsubscribe()
 
@@ -223,10 +228,10 @@ async def test_unsubscribed_listeners_hear_nothing_more(
 async def test_a_broken_listener_does_not_break_the_job(
     service: CheckService, store: Store, model: RecordingModel, jobs: JobManager, bus: EventBus
 ) -> None:
-    def broken(event: JobUpdated) -> None:
+    def broken(event: Update) -> None:
         raise RuntimeError("listener bug")
 
-    heard: list[JobUpdated] = []
+    heard: list[Update] = []
     bus.subscribe(broken)
     bus.subscribe(heard.append)
     (thread,) = await launched(service, model, "Lead A")

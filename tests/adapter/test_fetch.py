@@ -28,6 +28,7 @@ from openrouter_wire import (
     message_item,
     search_item,
     stream_of,
+    text_reply,
 )
 
 VIDEO = "https://www.youtube.com/watch?v=abc123XYZ"
@@ -119,31 +120,16 @@ def test_a_fetched_page_counts_as_a_source_with_its_text_as_the_passage() -> Non
 # -- research -------------------------------------------------------------------------------
 
 
-async def test_a_quote_from_a_page_the_agent_opened_is_grounded_and_checked() -> None:
+async def test_a_page_the_agent_opened_is_a_source_its_findings_may_link_to() -> None:
     search = stream_of(
-        search_item("council bridge vote", [VIDEO]),
+        search_item("council bridge vote"),
         fetch_item(VIDEO, "Council meeting", TRANSCRIPT),
-        message_item("Notes on the meeting."),
+        message_item(f"The council voted nine to two: {VIDEO}"),
     )
-    report = {
-        "summary": "A video of the meeting.",
-        "evidence": [
-            {
-                "url": VIDEO,
-                "title": "Council meeting",
-                "quote": "voted nine to two to close the Elm Street bridge",
-                "stance": "supports",
-            }
-        ],
-        "undetermined": "Nothing else.",
-    }
-    wire = Wire(search, json_reply(report))
 
-    result = await research(wire)
+    result = await research(Wire(search))
 
-    item = result.report.evidence[0]
-    assert (item.grounded, item.quote_matched) == (True, True)
-    assert "voted nine to two to close the Elm Street bridge" in wire.bodies[1]["input"]
+    assert result.report.unreturned_links == []
 
 
 async def test_opening_a_page_is_reported_as_progress() -> None:
@@ -185,7 +171,9 @@ async def test_a_link_in_the_text_is_opened_before_leads_are_written() -> None:
     result = await decompose(wire, f"watch this {VIDEO}")
 
     assert result == Decomposition(
-        "Bridge closure video", ["The council voted 9 to 2 to close it."]
+        "Bridge closure video",
+        ["The council voted 9 to 2 to close it."],
+        f"Opened: Council meeting ({VIDEO})",
     )
     first, second = wire.bodies
     assert first["tools"] == [
@@ -210,7 +198,7 @@ async def test_a_link_in_the_text_is_opened_before_leads_are_written() -> None:
 
 async def test_only_the_sites_linked_in_the_text_may_be_opened() -> None:
     read = stream_of(message_item("Nothing opened."))
-    wire = Wire(read, json_reply(LEADS))
+    wire = Wire(read, text_reply("Nothing found elsewhere."), json_reply(LEADS))
     text = (
         "see https://example.org/a?x=1, and (https://news.example.com/story). "
         "also http://EXAMPLE.org/b and ftp://files.example.net/x"
@@ -224,13 +212,13 @@ async def test_only_the_sites_linked_in_the_text_may_be_opened() -> None:
 
 async def test_a_link_that_cannot_be_opened_still_gives_leads_and_says_so() -> None:
     read = stream_of(fetch_item(VIDEO, error="Exa returned no content for this URL."))
-    wire = Wire(read, json_reply(LEADS))
+    wire = Wire(read, text_reply("Nothing else found."), json_reply(LEADS))
 
     result = await decompose(wire, f"watch this {VIDEO}")
 
     assert result.title == "Bridge closure video"
-    assert "could not be opened" in wire.bodies[1]["input"]
-    assert VIDEO in wire.bodies[1]["input"]
+    assert "could not be opened" in wire.bodies[2]["input"]
+    assert VIDEO in wire.bodies[2]["input"]
 
 
 async def test_a_failure_while_opening_links_is_reported() -> None:
