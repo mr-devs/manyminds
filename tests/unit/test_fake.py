@@ -164,3 +164,13 @@ async def test_exactly_one_generated_lead_is_scripted_to_fail(fake: FakeModelCli
     assert raised.value.message == "Demo failure: this lead is scripted to fail."
     for lead in leads[:3] + leads[4:]:
         assert (await research(fake, lead)).summary.startswith("Demo report")
+
+
+async def test_the_demo_title_leaves_out_the_note_about_attached_images(
+    fake: FakeModelClient,
+) -> None:
+    text = "Is this real?\n\n[Attached image 1, as described by a model: A stage.]"
+
+    result = await fake.decompose(text, "", count=3, avoid=[], model="demo/model")
+
+    assert result.title == "Demo: Is this real?"
