@@ -19,9 +19,11 @@ the box and for an ordinary attach button.
 - Before the leads or a reply are written, each image is **shown to the model itself** (the
   bytes are sent, as a data address) and described under the same instructions as linked
   images (decision 19). The description is saved and shown under the image as "Read as: …".
-- Everything downstream reads the message **as its words followed by those descriptions**,
-  each labelled as a model's reading that may be wrong: the lead generator, the conversation,
-  and research agents. No call other than the describing one receives the image.
+- Everything downstream is given the user's words and, **apart from them**, what each image
+  was said to show, labelled as a model's reading that may be wrong. A description is never
+  placed inside what the user said: words or an address visible in an image must not be
+  taken for a request or a link of the user's, so nothing in an image is opened or obeyed.
+  No call other than the describing one receives the image.
 - An image that cannot be described is said to be so, and the work goes on.
 
 ## Consequences
