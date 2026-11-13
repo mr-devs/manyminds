@@ -128,3 +128,27 @@ def test_a_rule_separates_and_unfinished_marks_are_left_as_written() -> None:
 
 def test_empty_text_has_no_blocks() -> None:
     assert parse("  \n\n ") == []
+
+
+def test_a_quoted_passage_is_its_own_block_without_its_marker() -> None:
+    assert parse("> First line\n> second **line**\n\nAfter.") == [
+        Block("quote", lines=[[plain("First line")], [plain("second "), Run("line", bold=True)]]),
+        Block("paragraph", lines=[[plain("After.")]]),
+    ]
+
+
+def test_a_quote_under_a_list_item_sits_under_it_and_what_follows_is_not_part_of_the_quote() -> (
+    None
+):
+    text = "- [NASA](https://nasa.example/a) — 2005.\n  > “Generally isn't.”\n  **Undermines** it.\n- Next"
+
+    assert parse(text) == [
+        Block(
+            "item",
+            marker="•",
+            lines=[[Run("NASA", url="https://nasa.example/a"), plain(" — 2005.")]],
+        ),
+        Block("quote", indent=1, lines=[[plain("“Generally isn't.”")]]),
+        Block("paragraph", indent=1, lines=[[Run("Undermines", bold=True), plain(" it.")]]),
+        Block("item", marker="•", lines=[[plain("Next")]]),
+    ]
