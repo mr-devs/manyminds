@@ -530,6 +530,8 @@ milestones 8 and 9 in a different shape.
   conversation with **Try again**.
 - A check opens with five leads at most. A check can be deleted from the sidebar.
 - The conversation may search the web before it replies (decision 20).
+- Images can be pasted into the box or attached with a button, are kept with the message,
+  and are described by the model before leads or a reply are written (decision 21).
 - **Not done:** recording the cost of chat replies; retrying a failed reply with one press
   (send the message again); choosing the chat model (it is the lead-generation model);
   "Generate more leads" as a button (ask for more in the chat).

@@ -47,6 +47,10 @@ If the text you paste contains links, the app opens them (through OpenRouter and
 your computer) so that leads can be drawn from what they say. For a YouTube link that is the
 video's title and transcript.
 
+You can paste a screenshot or other image into the box, or attach one with the paperclip.
+Attached images are sent to OpenRouter and the model provider, which describes them; they are
+saved with the check on your computer and deleted with it.
+
 If a link will not open, as posts on X often will not, the app looks for the same material
 elsewhere, such as a mirror or archive. That step is given the link only, not your words.
 Images in your text or on the opened pages are shown to the model, which describes what is
