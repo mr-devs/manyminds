@@ -1,6 +1,6 @@
 # 8. One validated report schema, with no verdict
 
-- Status: Accepted
+- Status: Superseded by decision 22
 - Date: 2026-11-11
 
 ## Context

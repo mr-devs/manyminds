@@ -2,31 +2,56 @@
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable, Coroutine
+from typing import Any
 
 from manyminds.core.errors import ModelError
-from manyminds.core.events import EventBus, JobUpdated
-from manyminds.core.models import ErrorKind, JobEventKind
+from manyminds.core.events import ChatUpdated, EventBus, JobUpdated
+from manyminds.core.models import ErrorKind, JobEventKind, JobStatus
 from manyminds.core.ports import ModelClient, Progress
 from manyminds.core.storage import Store
 
 logger = logging.getLogger(__name__)
+
+MAX_CONCURRENT = 3
+"""Research jobs running at once. Each makes many requests a minute, and OpenRouter limits
+how many an account may make to one model: six at once has been enough to stop them all."""
+RATE_LIMIT_RETRIES = 2
+RATE_LIMIT_WAIT = 60.0
+"""Seconds to wait before trying a rate-limited job again; the limits are counted by the
+minute."""
 
 
 class JobManager:
     """Each job runs in its own task; a failure in one never reaches another."""
 
     def __init__(
-        self, store: Store, model: ModelClient, bus: EventBus, *, max_concurrent: int = 6
+        self,
+        store: Store,
+        model: ModelClient,
+        bus: EventBus,
+        *,
+        max_concurrent: int = MAX_CONCURRENT,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
+        self._sleep = sleep
         self._store = store
         self._model = model
         self._bus = bus
         self._slots = asyncio.Semaphore(max_concurrent)
-        self._tasks: set[asyncio.Task[None]] = set()
+        self._tasks: set[asyncio.Task[Any]] = set()
+        self.on_settled: Callable[[str], None] | None = None
+        """Called with a check's id each time one of its research jobs has ended."""
 
     def start(self, job_id: str) -> None:
         """Schedule a queued job. Must be called from the running event loop."""
         task = asyncio.get_running_loop().create_task(self._run(job_id))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def spawn(self, work: Coroutine[Any, Any, object]) -> None:
+        """Run other background work, so that waiting until idle waits for it too."""
+        task = asyncio.get_running_loop().create_task(work)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -47,6 +72,22 @@ class JobManager:
             name = type(error).__name__
             logger.error("Job %s failed unexpectedly: %s", job_id, name)
             self._fail(job_id, ErrorKind.UNKNOWN, f"Unexpected error ({name})")
+        self._hand_back(job_id)
+
+    def _hand_back(self, job_id: str) -> None:
+        """Report in the check's conversation that this job has ended, and say so to whoever
+        decides what follows. Nothing that goes wrong here may escape the task."""
+        try:
+            job = self._store.get_job(job_id)
+            if job.status not in (JobStatus.DONE, JobStatus.FAILED):
+                return
+            check_id = self._store.get_thread(job.thread_id).check_id
+            self._store.add_handback(check_id, job_id)
+            self._bus.publish(ChatUpdated(check_id=check_id))
+            if self.on_settled is not None:
+                self.on_settled(check_id)
+        except Exception as error:
+            logger.error("Job %s could not hand back: %s", job_id, type(error).__name__)
 
     async def _research(self, job_id: str) -> None:
         job = self._store.get_job(job_id)
@@ -61,18 +102,32 @@ class JobManager:
         async with self._slots:
             self._store.mark_job_running(job_id)
             record(Progress(JobEventKind.STARTED))
-            try:
-                result = await self._model.research(
-                    thread.lead_text,
-                    check.source_text,
-                    job.instructions,
-                    model=job.model,
-                    search=job.search_engine,
-                    on_progress=record,
-                )
-            except ModelError as error:
-                self._fail(job_id, error.kind, error.message)
-                return
+            retries = 0
+            while True:
+                try:
+                    result = await self._model.research(
+                        thread.lead_text,
+                        self._store.source_for_lead(thread.lead_id),
+                        job.instructions,
+                        model=job.model,
+                        search=job.search_engine,
+                        on_progress=record,
+                    )
+                    break
+                except ModelError as error:
+                    if error.kind is not ErrorKind.RATE_LIMIT or retries == RATE_LIMIT_RETRIES:
+                        self._fail(job_id, error.kind, error.message)
+                        return
+                    # The job keeps its place while it waits, so fewer run in the meantime.
+                    retries += 1
+                    wait = max(RATE_LIMIT_WAIT, error.retry_after or 0.0)
+                    record(
+                        Progress(
+                            JobEventKind.RETRYING,
+                            f"{error.message} Trying again in {wait:.0f} seconds.",
+                        )
+                    )
+                    await self._sleep(wait)
             self._store.mark_job_done(job_id, result.report, result.usage)
         # The job is finished and saved. Announcing that must not be able to undo it.
         try:

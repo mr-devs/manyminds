@@ -14,7 +14,6 @@ from manyminds.core.models import ErrorKind, JobStatus, SearchEngine
 from manyminds.core.openrouter.adapter import OpenRouterModelClient
 from manyminds.core.openrouter.transport import Transport
 from manyminds.core.ports import Decomposition, ResearchResult
-from manyminds.core.safety import quote_in_passages
 from manyminds.core.services import build_services
 from manyminds.core.storage import Store
 from openrouter_wire import (
@@ -34,12 +33,13 @@ PAGE = "https://a.example/page"
 EXCERPT = "The bridge opened to traffic in March 1932 after six years of work."
 
 
-def report(url: str = PAGE, quote: str = "opened to traffic in March 1932") -> dict[str, Any]:
-    return {
-        "summary": "One page was found.",
-        "evidence": [{"url": url, "title": "A page", "quote": quote, "stance": "supports"}],
-        "undetermined": "Everything else.",
-    }
+LEADS = {"title": "One page was found.", "leads": ["A lead."]}
+
+
+async def leads_from(wire: Wire) -> Decomposition:
+    async with wire.http() as http:
+        client = OpenRouterModelClient(Transport(API_KEY, http))
+        return await client.decompose("Some text.", "", count=5, avoid=[], model="vendor/model-b")
 
 
 def search_reply(*annotations: dict[str, Any], urls: tuple[str, ...] = (PAGE,)) -> bytes:
@@ -187,80 +187,35 @@ async def test_stream_lines_may_use_crlf_and_omit_the_space_after_data() -> None
     assert events == [{"type": "response.created"}]
 
 
-# -- grounding --------------------------------------------------------------------------
+# -- links in the findings ---------------------------------------------------------------
 
 
-async def test_a_grounded_item_links_to_the_url_the_search_returned() -> None:
+async def test_a_link_with_a_tracking_tail_or_fragment_is_not_flagged() -> None:
     cited = f"{PAGE}?utm_content=the+pasted+text#and-more"
+    search = stream_of(search_item("a query", [PAGE]), message_item(f"See {cited}."))
 
-    result = await research(Wire(search_reply(), json_reply(report(url=cited))))
+    result = await research(Wire(search))
 
-    item = result.report.evidence[0]
-    assert item.grounded is True
-    assert item.url == PAGE
-
-
-async def test_an_ungrounded_item_keeps_the_url_the_model_gave() -> None:
-    result = await research(
-        Wire(search_reply(), json_reply(report(url="https://other.example/x?utm_source=a")))
-    )
-
-    item = result.report.evidence[0]
-    assert item.grounded is False
-    assert item.url == "https://other.example/x?utm_source=a"
+    assert result.report.unreturned_links == []
 
 
-async def test_a_quote_cannot_be_assembled_across_two_excerpts() -> None:
-    search = search_reply(
-        citation(PAGE, "A page", "Officials said the bridge is not"),
-        citation(PAGE, "A page", "safe to cross in winter, locals say."),
-    )
-    stitched = "the bridge is not safe to cross in winter"
+async def test_a_link_to_somewhere_else_is_flagged_as_the_model_wrote_it() -> None:
+    other = "https://other.example/x?utm_source=a"
+    search = stream_of(search_item("a query", [PAGE]), message_item(f"See {other}"))
 
-    result = await research(Wire(search, json_reply(report(quote=stitched))))
+    result = await research(Wire(search))
 
-    assert result.report.evidence[0].quote_matched is False
-
-
-async def test_a_quote_inside_either_excerpt_still_matches() -> None:
-    search = search_reply(
-        citation(PAGE, "A page", "Officials said the bridge is not"),
-        citation(PAGE, "A page", "safe to cross in winter, locals say."),
-    )
-
-    result = await research(
-        Wire(search, json_reply(report(quote="safe to cross in winter, locals say")))
-    )
-
-    assert result.report.evidence[0].quote_matched is True
-
-
-@pytest.mark.parametrize("quote", ["the", "in March", '"', "1932"])
-def test_a_quote_too_short_to_identify_a_passage_is_left_unchecked(quote: str) -> None:
-    assert quote_in_passages(quote, (EXCERPT,)) is None
-
-
-def test_a_quote_of_reasonable_length_matches() -> None:
-    assert quote_in_passages("opened to traffic in March 1932", (EXCERPT,)) is True
-
-
-async def test_an_excerpt_survives_the_same_page_listed_again_without_one() -> None:
-    search = stream_of(
-        message_item("Notes.", [citation(PAGE, "A page", EXCERPT)]),
-        search_item("a query", [f"{PAGE}?utm_source=openai"]),
-    )
-
-    result = await research(Wire(search, json_reply(report())))
-
-    assert result.report.evidence[0].quote_matched is True
+    assert result.report.unreturned_links == [other]
 
 
 async def test_a_malformed_url_from_the_search_does_not_fail_the_job() -> None:
-    search = search_reply(urls=("http://[bad", PAGE))
+    search = stream_of(
+        search_item("a query", ("http://[bad", PAGE)), message_item(f"Findings: {PAGE}")
+    )
 
-    result = await research(Wire(search, json_reply(report())))
+    result = await research(Wire(search))
 
-    assert result.report.evidence[0].grounded is True
+    assert result.report.unreturned_links == []
 
 
 # -- odd shapes in the final response ----------------------------------------------------
@@ -282,11 +237,11 @@ async def test_unexpected_values_in_the_output_are_skipped() -> None:
     }
     search = sse({"type": "response.completed", "response": final})
 
-    result = await research(Wire(search, json_reply(report())))
+    result = await research(Wire(search))
 
-    assert result.report.evidence[0].grounded is True
-    assert result.usage.input_tokens == 100
-    assert result.usage.cost == pytest.approx(0.001)
+    assert result.report.notes == "Notes."
+    assert result.usage.input_tokens == 0
+    assert result.usage.cost == 0.0
 
 
 async def test_searches_are_counted_from_the_output_when_usage_omits_them() -> None:
@@ -297,7 +252,7 @@ async def test_searches_are_counted_from_the_output_when_usage_omits_them() -> N
         usage={"input_tokens": 10, "output_tokens": 5},
     )
 
-    result = await research(Wire(search, json_reply(report())))
+    result = await research(Wire(search))
 
     assert result.usage.searches == 2
 
@@ -306,23 +261,23 @@ async def test_searches_are_counted_from_the_output_when_usage_omits_them() -> N
 
 
 async def test_a_preamble_message_before_the_json_is_ignored() -> None:
-    reply = stream_of(message_item("Here is the report."), message_item(json.dumps(report())))
-    wire = Wire(search_reply(), reply)
+    reply = stream_of(message_item("Here are the leads."), message_item(json.dumps(LEADS)))
+    wire = Wire(reply)
 
-    result = await research(wire)
+    result = await leads_from(wire)
 
-    assert result.report.summary == "One page was found."
-    assert len(wire.bodies) == 2
+    assert result.title == "One page was found."
+    assert len(wire.bodies) == 1
 
 
 async def test_json_inside_a_code_fence_is_accepted() -> None:
-    fenced = "```json\n" + json.dumps(report()) + "\n```"
-    wire = Wire(search_reply(), text_reply(fenced))
+    fenced = "```json\n" + json.dumps(LEADS) + "\n```"
+    wire = Wire(text_reply(fenced))
 
-    result = await research(wire)
+    result = await leads_from(wire)
 
-    assert result.report.summary == "One page was found."
-    assert len(wire.bodies) == 2
+    assert result.title == "One page was found."
+    assert len(wire.bodies) == 1
 
 
 # -- leads to avoid are data --------------------------------------------------------------

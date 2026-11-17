@@ -18,7 +18,7 @@ async def test_each_lead_is_edited_in_a_box_that_grows_with_its_text(
     await user.open("/")
     user.find(marker="composer").type("The bridge opened in 1932.")
     user.find("Generate leads").click()
-    await user.should_see("Leads to research")
+    await user.should_see(marker="lead-list")
 
     for row in ("lead-row-0", "lead-row-1"):
         with user.scope(marker=row):

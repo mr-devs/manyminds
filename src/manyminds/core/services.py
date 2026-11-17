@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from manyminds.core.checks import CheckService
 from manyminds.core.events import EventBus
-from manyminds.core.jobs import JobManager
+from manyminds.core.jobs import MAX_CONCURRENT, JobManager
 from manyminds.core.models import SearchEngine
 from manyminds.core.ports import ModelClient
 from manyminds.core.storage import Store
@@ -30,14 +30,21 @@ def build_services(
     model: ModelClient,
     research_models: Sequence[str],
     decompose_model: str,
+    chat_model: str | None = None,
     search_engine: SearchEngine = SearchEngine.EXA,
     notice: str = "",
-    max_concurrent: int = 6,
+    max_concurrent: int = MAX_CONCURRENT,
 ) -> Services:
     bus = EventBus()
     jobs = JobManager(store, model, bus, max_concurrent=max_concurrent)
     checks = CheckService(
-        store, model, jobs, decompose_model=decompose_model, search_engine=search_engine
+        store,
+        model,
+        jobs,
+        bus=bus,
+        decompose_model=decompose_model,
+        chat_model=chat_model or decompose_model,
+        search_engine=search_engine,
     )
     return Services(
         store=store,

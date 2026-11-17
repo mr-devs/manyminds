@@ -1,5 +1,7 @@
 """ModelClient backed by OpenRouter's Responses API."""
 
+import asyncio
+import base64
 import json
 import math
 from collections.abc import Callable, Sequence
@@ -12,7 +14,6 @@ from manyminds.core import prompts
 from manyminds.core.errors import ModelError
 from manyminds.core.models import (
     ErrorKind,
-    EvidenceItem,
     JobEventKind,
     Report,
     SearchEngine,
@@ -20,15 +21,21 @@ from manyminds.core.models import (
 )
 from manyminds.core.openrouter import websearch
 from manyminds.core.openrouter.schemas import (
+    CHAT_SCHEMA,
     DECOMPOSITION_SCHEMA,
-    REPORT_SCHEMA,
+    WireChatReply,
     WireDecomposition,
-    WireReport,
     text_format,
 )
 from manyminds.core.openrouter.transport import Transport
-from manyminds.core.ports import Decomposition, Progress, ProgressCallback, ResearchResult
-from manyminds.core.safety import quote_in_passages, url_key
+from manyminds.core.ports import (
+    ChatContext,
+    ChatReply,
+    Decomposition,
+    Progress,
+    ProgressCallback,
+    ResearchResult,
+)
 
 _Wire = TypeVar("_Wire", bound=BaseModel)
 _MAX_PROBLEM_TEXT = 2000
@@ -61,29 +68,187 @@ class _Tally:
         )
 
 
+@dataclass
+class _Shared:
+    """What the links and images in the user's text turned out to show."""
+
+    unread: list[str]
+    """Links the user wrote that could not be opened."""
+    opened: list[websearch.Fetch]
+    images: list[tuple[str, str | None]]
+    """(address, description); the description is None if the image could not be looked at."""
+
+    @property
+    def pages(self) -> list[tuple[str, str | None, str | None]]:
+        unread: list[tuple[str, str | None, str | None]] = [
+            (url, None, None) for url in self.unread
+        ]
+        return unread + [(page.url, page.title, page.content) for page in self.opened]
+
+    def seen(self) -> str:
+        """A plain account for the user of what was read."""
+        lines = [f"Could not open: {url}" for url in self.unread]
+        lines += [f"Opened: {page.title or 'Untitled page'} ({page.url})" for page in self.opened]
+        for url, description in self.images:
+            lines.append(f"Image {url}: {description or 'could not be looked at'}")
+        return "\n".join(lines)
+
+
+def _opened(pages: Sequence[websearch.Fetch]) -> list[websearch.Fetch]:
+    """The pages that were read, each once."""
+    kept: list[websearch.Fetch] = []
+    for page in pages:
+        if page.content is not None and all(page.url != other.url for other in kept):
+            kept.append(page)
+    return kept
+
+
+def _fetched(response: dict[str, Any]) -> list[websearch.Fetch]:
+    output = response.get("output")
+    pages = [
+        websearch.fetch_from_item(item) for item in (output if isinstance(output, list) else [])
+    ]
+    return [page for page in pages if page is not None]
+
+
 class OpenRouterModelClient:
     def __init__(self, transport: Transport) -> None:
         self._transport = transport
 
     async def decompose(
-        self, text: str, instructions: str, *, count: int, avoid: Sequence[str], model: str
+        self,
+        text: str,
+        instructions: str,
+        *,
+        count: int,
+        avoid: Sequence[str],
+        model: str,
+        images: Sequence[str | None] = (),
+        on_progress: ProgressCallback | None = None,
     ) -> Decomposition:
         tally = _Tally()
-        pages = await self._read_links(text, model, tally)
+        tell = on_progress or _silent
+        shared = await self._shared(text, model, tally, tell)
+        pictures = prompts.attached_images(images) + shared.images
+        tell(Progress(JobEventKind.NOTE, "Writing the leads"))
         body = {
             "model": model,
             "instructions": prompts.DECOMPOSE_INSTRUCTIONS,
-            "input": prompts.decompose_input(text, instructions, count, avoid, pages),
+            "input": prompts.decompose_input(
+                text, instructions, count, avoid, shared.pages, pictures
+            ),
         }
         wire = await self._structured(
             body, "decomposition", DECOMPOSITION_SCHEMA, WireDecomposition, tally
         )
-        return Decomposition(title=wire.title, leads=wire.leads[:count])
+        return Decomposition(title=wire.title, leads=wire.leads[:count], seen=shared.seen())
+
+    async def converse(
+        self,
+        message: str,
+        context: ChatContext,
+        *,
+        model: str,
+        search: SearchEngine = SearchEngine.EXA,
+        images: Sequence[str | None] = (),
+        on_progress: ProgressCallback | None = None,
+    ) -> ChatReply:
+        """Answer in the main conversation.
+
+        Links in the message are opened first. Then the model may search the web, in a call
+        of its own. The reply itself is written by a call with a fixed format and no tools.
+        """
+        tally = _Tally()
+        tell = on_progress or _silent
+        shared = await self._shared(message, model, tally, tell, tolerant=True)
+        pictures = prompts.attached_images(images) + shared.images
+        leads = _leads(context)
+        turns = _turns(context)
+        given = prompts.chat_input(message, turns, leads, shared.pages, pictures)
+        findings = await self._look_up(given, model, search, tally, tell)
+        body = {
+            "model": model,
+            "instructions": prompts.CHAT_INSTRUCTIONS,
+            "input": prompts.chat_input(message, turns, leads, shared.pages, pictures, findings),
+        }
+        wire = await self._structured(body, "chat_reply", CHAT_SCHEMA, WireChatReply, tally)
+        return ChatReply(body=wire.reply, leads=wire.leads)
+
+    async def _look_up(
+        self, given: str, model: str, search: SearchEngine, tally: _Tally, tell: ProgressCallback
+    ) -> str:
+        """Let the model search for what the reports do not hold. Returns what it found,
+        written out for the call that replies, or nothing if it did not search.
+
+        A failed search does not cost the user their reply: it is said so, and the reply is
+        written from the reports.
+        """
+        try:
+            found = await self._run(
+                {
+                    "model": model,
+                    "instructions": prompts.CHAT_SEARCH_INSTRUCTIONS,
+                    "input": given,
+                    "tools": [websearch.tool_entry(search), websearch.fetch_tool_entry()],
+                    **websearch.REQUEST_FIELDS,
+                },
+                tally,
+                lambda item: _report_steps(item, tell),
+            )
+        except ModelError:
+            tell(
+                Progress(
+                    JobEventKind.NOTE, "The web search failed, so the reply uses the reports only"
+                )
+            )
+            return ""
+        cited = websearch.citations(found)
+        notes = _text(found).strip()
+        if not cited or not notes or notes == prompts.NO_SEARCH:
+            return ""
+        return prompts.search_findings(notes, [(c.url, c.title, c.passages) for c in cited])
+
+    async def _shared(
+        self,
+        text: str,
+        model: str,
+        tally: _Tally,
+        tell: ProgressCallback,
+        *,
+        tolerant: bool = False,
+    ) -> _Shared:
+        """Work out what the links and images in the user's text show.
+
+        Linked pages are opened; a link that will not open is looked for another way; images,
+        whether linked directly or found on those pages, are each shown to the model.
+        """
+        links = prompts.page_links(text)[: prompts.MAX_LINKED_PAGES]
+        try:
+            opened = _opened(await self._read_links(text, model, tally, tell))
+        except ModelError:
+            # A reply can still be written without the links; leads cannot be trusted to.
+            if not tolerant:
+                raise
+            tell(Progress(JobEventKind.NOTE, "The links could not be opened"))
+            return _Shared(links, [], [])
+        # Judged against what the user wrote, not what the model says it tried: a link it
+        # never tried is still unread, and an address it made up is never passed on.
+        unread = [
+            link for link in links if not any(prompts.same_page(link, page.url) for page in opened)
+        ]
+        if unread:
+            tell(Progress(JobEventKind.NOTE, "Looking for another way into what would not open"))
+            opened = _opened(opened + await self._read_around(unread, model, tally, tell))
+        urls = prompts.image_links(text, [page.content or "" for page in opened])
+        for url in urls:
+            tell(Progress(JobEventKind.NOTE, f"Looking at an image: {url}"))
+        described = await asyncio.gather(*(self._look(url, model, tally) for url in urls))
+        return _Shared(unread, opened, list(zip(urls, described, strict=True)))
 
     async def _read_links(
-        self, text: str, model: str, tally: _Tally
-    ) -> list[tuple[str, str | None, str | None]]:
-        """Open the links in pasted text and return (url, title, content) for each.
+        self, text: str, model: str, tally: _Tally, tell: ProgressCallback
+    ) -> list[websearch.Fetch]:
+        """Open the pages the text links to.
 
         The tool is held to the sites the text itself links to, so that nothing on a page can
         send the model on to an address of its own choosing.
@@ -91,6 +256,7 @@ class OpenRouterModelClient:
         sites = prompts.linked_sites(text)
         if not sites:
             return []
+        tell(Progress(JobEventKind.NOTE, "Opening the links in your message"))
         final = await self._run(
             {
                 "model": model,
@@ -103,12 +269,68 @@ class OpenRouterModelClient:
                 ],
             },
             tally,
+            lambda item: _report_steps(item, tell),
         )
-        output = final.get("output")
-        fetched = [
-            websearch.fetch_from_item(item) for item in (output if isinstance(output, list) else [])
-        ]
-        return [(page.url, page.title, page.content) for page in fetched if page is not None]
+        return _fetched(final)
+
+    async def _read_around(
+        self, links: Sequence[str], model: str, tally: _Tally, tell: ProgressCallback
+    ) -> list[websearch.Fetch]:
+        """Look for what unopened links show somewhere else: a mirror, an archive, coverage.
+
+        This call may search and open any site, so it is given the addresses alone and never
+        what the user wrote. If it fails, the leads are written without it.
+        """
+        try:
+            final = await self._run(
+                {
+                    "model": model,
+                    "instructions": prompts.READ_AROUND_INSTRUCTIONS,
+                    "input": prompts.read_around_input(links),
+                    "tools": [
+                        websearch.tool_entry(SearchEngine.EXA),
+                        websearch.fetch_tool_entry(max_uses=prompts.MAX_LINKED_PAGES),
+                    ],
+                    **websearch.REQUEST_FIELDS,
+                },
+                tally,
+                lambda item: _report_steps(item, tell),
+            )
+        except ModelError:
+            return []
+        found = [page for page in _fetched(final) if page.content is not None]
+        return found[: prompts.MAX_LINKED_PAGES]
+
+    async def describe_image(self, media_type: str, data: bytes, *, model: str) -> str:
+        """Say what an image the user attached shows. The image itself is sent."""
+        encoded = base64.b64encode(data).decode("ascii")
+        described = await self._look(f"data:{media_type};base64,{encoded}", model, _Tally(), True)
+        if described is None:
+            raise ModelError(ErrorKind.INVALID_OUTPUT, "The model said nothing about the image.")
+        return described
+
+    async def _look(self, url: str, model: str, tally: _Tally, strict: bool = False) -> str | None:
+        """A description of one image, or None if the model could not be shown it."""
+        body = {
+            "model": model,
+            "instructions": prompts.IMAGE_INSTRUCTIONS,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": prompts.IMAGE_REQUEST},
+                        {"type": "input_image", "image_url": url},
+                    ],
+                }
+            ],
+        }
+        try:
+            described = _text(await self._run(body, tally)).strip()
+        except ModelError:
+            if strict:
+                raise
+            return None
+        return described[: prompts.MAX_IMAGE_DESCRIPTION_CHARS] or None
 
     async def research(
         self,
@@ -120,7 +342,22 @@ class OpenRouterModelClient:
         search: SearchEngine,
         on_progress: ProgressCallback,
     ) -> ResearchResult:
+        """Research one lead in a single call. What the agent writes last is what it hands
+        back; anything it wrote along the way is reported as progress."""
         tally = _Tally()
+        held: list[dict[str, Any]] = []
+
+        def on_item(item: dict[str, Any]) -> None:
+            # A message is only known to be the last once the call ends, so each is held
+            # until something follows it.
+            if item.get("type") == "message":
+                held.append(item)
+                return
+            for earlier in held:
+                _report_progress(earlier, on_progress)
+            held.clear()
+            _report_progress(item, on_progress)
+
         found = await self._run(
             {
                 "model": model,
@@ -130,23 +367,36 @@ class OpenRouterModelClient:
                 **websearch.REQUEST_FIELDS,
             },
             tally,
-            lambda item: _report_progress(item, on_progress),
+            on_item,
         )
-        notes = _text(found)
-        if not notes.strip():
+        notes = _last_words(found).strip()
+        if not notes:
             raise ModelError(ErrorKind.INVALID_OUTPUT, "The model searched but wrote nothing.")
-        cited = websearch.citations(found)
+        returned = [source.url for source in websearch.citations(found)]
+        unreturned = [
+            url
+            for url in prompts.links_in(notes)
+            if not any(prompts.same_page(url, known) for known in returned)
+        ]
+        return ResearchResult(
+            report=Report(notes=notes, unreturned_links=unreturned), usage=tally.usage()
+        )
 
-        on_progress(Progress(JobEventKind.WRITING))
+    async def write_report(
+        self,
+        context: ChatContext,
+        *,
+        model: str,
+        on_progress: ProgressCallback | None = None,
+    ) -> ChatReply:
+        """Write the one report on a check, from what its threads handed back. No tools."""
         body = {
             "model": model,
             "instructions": prompts.REPORT_INSTRUCTIONS,
-            "input": prompts.report_input(
-                lead, [(c.url, c.title, c.passages) for c in cited], notes
-            ),
+            "input": prompts.chat_input(None, _turns(context), _leads(context)),
         }
-        wire = await self._structured(body, "report", REPORT_SCHEMA, WireReport, tally)
-        return ResearchResult(report=_grounded(wire, cited), usage=tally.usage())
+        wire = await self._structured(body, "report", CHAT_SCHEMA, WireChatReply, _Tally())
+        return ChatReply(body=wire.reply, leads=wire.leads)
 
     async def _structured(
         self,
@@ -261,6 +511,16 @@ def _raise_if_refused_or_cut_short(response: dict[str, Any]) -> None:
     raise ModelError(ErrorKind.PROVIDER, f"The reply was cut short ({reason}).")
 
 
+def _silent(progress: Progress) -> None:
+    """For callers that are not watching."""
+
+
+def _report_steps(item: dict[str, Any], tell: ProgressCallback) -> None:
+    """Report the searches made and pages opened, leaving out what the model wrote."""
+    if item.get("type") not in ("message", "reasoning"):
+        _report_progress(item, tell)
+
+
 def _report_progress(item: dict[str, Any], on_progress: ProgressCallback) -> None:
     kind = item.get("type")
     search = websearch.search_from_item(item)
@@ -287,24 +547,34 @@ def _report_progress(item: dict[str, Any], on_progress: ProgressCallback) -> Non
             on_progress(Progress(JobEventKind.MESSAGE, text))
 
 
-def _grounded(wire: WireReport, cited: Sequence[websearch.Citation]) -> Report:
-    """Build the report, flagging each item against what the search tool returned."""
-    by_key = {url_key(c.url): c for c in cited}
-    evidence = []
-    for item in wire.evidence:
-        source = by_key.get(url_key(item.url))
-        evidence.append(
-            EvidenceItem(
-                # A grounded item links to the page the search returned, not to whatever
-                # variant of its address the model wrote.
-                url=source.url if source is not None else item.url,
-                title=item.title,
-                quote=item.quote,
-                stance=item.stance,
-                grounded=source is not None,
-                quote_matched=(
-                    quote_in_passages(item.quote, source.passages) if source is not None else None
-                ),
-            )
+def _turns(context: ChatContext) -> list[tuple[str, str, Sequence[str | None]]]:
+    return [(turn.role.value, turn.body, turn.images) for turn in context.turns]
+
+
+def _leads(context: ChatContext) -> list[tuple[str, str, Sequence[str]]]:
+    return [
+        (
+            note.text,
+            note.state,
+            [
+                prompts.findings_text(report.notes, report.unreturned_links)
+                for report in note.reports
+            ],
         )
-    return Report(summary=wire.summary, evidence=evidence, undetermined=wire.undetermined)
+        for note in context.leads
+    ]
+
+
+def _last_words(response: dict[str, Any]) -> str:
+    """What the model wrote after its last search or page: the messages that end its output."""
+    output = response.get("output")
+    items = [
+        item for item in (output if isinstance(output, list) else []) if isinstance(item, dict)
+    ]
+    last: list[dict[str, Any]] = []
+    for item in items:
+        if item.get("type") == "message":
+            last.append(item)
+        elif item.get("type") != "reasoning":
+            last = []
+    return _text({"output": last})

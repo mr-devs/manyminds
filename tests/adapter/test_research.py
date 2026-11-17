@@ -1,27 +1,23 @@
-"""Research through OpenRouter: a search call, then a no-tools call that writes the report."""
+"""Research through OpenRouter: one call that searches, reads, and hands back its findings."""
 
 from __future__ import annotations
-
-from typing import Any
 
 import pytest
 
 from manyminds.core.errors import ModelError
-from manyminds.core.models import ErrorKind, JobEventKind, SearchEngine, Stance
+from manyminds.core.models import ErrorKind, JobEventKind, SearchEngine
 from manyminds.core.openrouter.adapter import OpenRouterModelClient
 from manyminds.core.openrouter.transport import Transport
 from manyminds.core.ports import Progress, ResearchResult
 from openrouter_wire import (
     API_KEY,
     Wire,
-    citation,
+    fetch_item,
     fixture,
-    json_reply,
     message_item,
     reasoning_item,
     search_item,
     stream_of,
-    text_reply,
 )
 
 LEAD = "The Great Wall of China is visible from space with the naked eye."
@@ -30,31 +26,6 @@ SCIAM = (
     "https://www.scientificamerican.com/article/no-you-cant-see-the-great-wall-of-china-from-space/"
 )
 NASA_PDF = "https://www.nasa.gov/wp-content/uploads/static/history/PDFs/great_wall_less_great_from_space.pdf"
-
-REPORT = {
-    "summary": "NASA pages say the wall is hard or impossible to see unaided from orbit.",
-    "evidence": [
-        {
-            "url": NASA_IMAGE,
-            "title": "Great Wall",
-            "quote": "difficult or impossible to see from Earth orbit",
-            "stance": "undermines",
-        },
-        {
-            "url": SCIAM,
-            "title": "No, You Can\u2019t See the Great Wall of China from Space",
-            "quote": "astronauts wave at the wall every morning",
-            "stance": "supports",
-        },
-        {
-            "url": "https://example.org/never-returned",
-            "title": "Made up",
-            "quote": "it is plainly visible",
-            "stance": "supports",
-        },
-    ],
-    "undetermined": "Whether it can be seen under rare lighting conditions.",
-}
 
 
 async def research(
@@ -85,7 +56,7 @@ async def failure(wire: Wire) -> ModelError:
 
 
 async def test_the_search_call_has_the_search_and_fetch_tools_and_no_schema() -> None:
-    wire = Wire(fixture("search_exa.sse"), json_reply(REPORT))
+    wire = Wire(fixture("search_exa.sse"))
 
     await research(wire, instructions="Prefer primary sources.")
 
@@ -110,142 +81,134 @@ async def test_the_search_call_has_the_search_and_fetch_tools_and_no_schema() ->
 
 
 async def test_the_engine_setting_reaches_the_tool() -> None:
-    wire = Wire(fixture("search_native.sse"), json_reply(REPORT))
+    wire = Wire(fixture("search_native.sse"))
 
     await research(wire, search=SearchEngine.AUTO)
 
     assert wire.bodies[0]["tools"][0]["parameters"]["engine"] == "auto"
 
 
-async def test_the_report_call_has_no_tools_and_a_strict_schema() -> None:
-    wire = Wire(fixture("search_exa.sse"), json_reply(REPORT))
+async def test_research_is_a_single_call() -> None:
+    wire = Wire(fixture("search_exa.sse"))
 
     await research(wire)
 
-    assert len(wire.bodies) == 2
-    second = wire.bodies[1]
-    assert "tools" not in second
-    assert second["model"] == "vendor/model-a"
-    assert second["provider"] == {"require_parameters": True}
-    schema_format = second["text"]["format"]
-    assert schema_format["type"] == "json_schema"
-    assert schema_format["strict"] is True
-    assert schema_format["schema"]["required"] == ["summary", "evidence", "undetermined"]
-    assert schema_format["schema"]["additionalProperties"] is False
-    item = schema_format["schema"]["properties"]["evidence"]["items"]
-    assert item["required"] == ["url", "title", "quote", "stance"]
-    assert item["properties"]["stance"]["enum"] == ["supports", "undermines"]
-    assert item["additionalProperties"] is False
+    assert len(wire.bodies) == 1
+    assert "text" not in wire.bodies[0]  # no fixed format: the agent writes its findings freely
 
 
-async def test_the_report_call_is_given_the_search_results_and_the_notes() -> None:
-    wire = Wire(fixture("search_exa.sse"), json_reply(REPORT))
+async def test_what_the_agent_wrote_last_is_handed_back_as_its_findings() -> None:
+    result = await research(Wire(fixture("search_exa.sse")))
 
-    await research(wire)
-
-    given = wire.bodies[1]["input"]
-    assert LEAD in given
-    assert NASA_IMAGE in given
-    assert "is difficult or impossible to see from Earth orbit" in given
-    assert "## Evidence" in given
+    assert result.report.notes.startswith("## Evidence\n\n1. **NASA")
+    assert "## What could not be determined" in result.report.notes
+    assert result.report.unreturned_links == []
 
 
-async def test_a_valid_report_is_returned_with_grounding_flags() -> None:
-    result = await research(Wire(fixture("search_exa.sse"), json_reply(REPORT)))
-
-    report = result.report
-    assert (
-        report.summary == "NASA pages say the wall is hard or impossible to see unaided from orbit."
-    )
-    assert report.undetermined == "Whether it can be seen under rare lighting conditions."
-    assert [e.url for e in report.evidence] == [
-        NASA_IMAGE,
-        SCIAM,
-        "https://example.org/never-returned",
-    ]
-    assert [e.stance for e in report.evidence] == [
-        Stance.UNDERMINES,
-        Stance.SUPPORTS,
-        Stance.SUPPORTS,
-    ]
-    assert [e.grounded for e in report.evidence] == [True, True, False]
-    assert [e.quote_matched for e in report.evidence] == [True, False, None]
-
-
-async def test_a_quote_matches_despite_different_spacing_and_curly_quotes() -> None:
+async def test_what_it_wrote_along_the_way_is_progress_and_not_part_of_the_findings() -> None:
     search = stream_of(
-        search_item("q", ["https://a.example/page"]),
-        message_item(
-            "notes",
-            [
-                citation(
-                    "https://a.example/page", "A", "The wall isn\u2019t\n visible   from the moon."
-                )
-            ],
-        ),
+        message_item("I will start with NASA."),
+        search_item("nasa great wall", ["https://a.example/page"]),
+        message_item("## Findings\n\nOne source: https://a.example/page"),
+        message_item("Nothing else was found."),
     )
-    report = {
-        "summary": "s",
-        "evidence": [
-            {
-                "url": "https://a.example/page",
-                "title": "A",
-                "quote": "the wall isn't visible from the moon",
-                "stance": "undermines",
-            }
-        ],
-        "undetermined": "u",
-    }
-
-    result = await research(Wire(search, json_reply(report)))
-
-    assert result.report.evidence[0].quote_matched is True
-
-
-async def test_native_search_grounds_urls_but_cannot_check_quotes() -> None:
-    report = {
-        "summary": "s",
-        "evidence": [
-            {
-                "url": "https://eol.jsc.nasa.gov/FAQ/default.htm?utm_source=openai",
-                "title": "FAQ",
-                "quote": "The Great Wall is not visible to the naked eye from orbit",
-                "stance": "undermines",
-            }
-        ],
-        "undetermined": "u",
-    }
-    wire = Wire(fixture("search_native.sse"), json_reply(report))
-
-    result = await research(wire, search=SearchEngine.AUTO)
-
-    assert result.report.evidence[0].grounded is True
-    assert result.report.evidence[0].quote_matched is None
-
-
-async def test_progress_reports_searches_sources_notes_and_writing() -> None:
     progress: list[Progress] = []
 
-    await research(Wire(fixture("search_exa.sse"), json_reply(REPORT)), progress=progress)
+    result = await research(Wire(search), progress=progress)
+
+    assert result.report.notes == (
+        "## Findings\n\nOne source: https://a.example/page\n\nNothing else was found."
+    )
+    assert [(p.kind, p.detail) for p in progress] == [
+        (JobEventKind.MESSAGE, "I will start with NASA."),
+        (JobEventKind.SEARCHING, "nasa great wall"),
+        (JobEventKind.SOURCES_FOUND, "https://a.example/page"),
+    ]
+
+
+async def test_thinking_after_the_last_words_does_not_discard_them() -> None:
+    search = stream_of(
+        search_item("q", ["https://a.example/page"]),
+        message_item("The findings."),
+        reasoning_item("Done."),
+    )
+
+    result = await research(Wire(search))
+
+    assert result.report.notes == "The findings."
+
+
+# -- links the search never returned ---------------------------------------------------------
+
+
+def findings(text: str, *returned: str, opened: str | None = None) -> bytes:
+    items = [search_item("q", list(returned))]
+    if opened:
+        items.append(fetch_item(opened, "A page", "Its text."))
+    return stream_of(*items, message_item(text))
+
+
+async def test_links_the_search_returned_or_the_agent_opened_are_not_flagged() -> None:
+    text = (
+        "See https://a.example/page and [the report](https://www.b.example/report/) "
+        "and https://c.example/opened."
+    )
+    body = findings(
+        text,
+        "https://a.example/page",
+        "https://b.example/report",
+        opened="https://c.example/opened",
+    )
+
+    result = await research(Wire(body))
+
+    assert result.report.unreturned_links == []
+
+
+async def test_a_link_the_search_never_returned_is_flagged() -> None:
+    text = "See https://a.example/page and https://made-up.example/proof and again https://made-up.example/proof"
+
+    result = await research(Wire(findings(text, "https://a.example/page")))
+
+    assert result.report.unreturned_links == ["https://made-up.example/proof"]
+
+
+async def test_a_lookalike_host_or_another_page_on_the_same_site_is_flagged() -> None:
+    text = "https://nasa.gov.evil.example/great-wall and https://www.nasa.gov/other-page"
+
+    result = await research(Wire(findings(text, "https://www.nasa.gov/great-wall")))
+
+    assert result.report.unreturned_links == [
+        "https://nasa.gov.evil.example/great-wall",
+        "https://www.nasa.gov/other-page",
+    ]
+
+
+async def test_native_search_results_count_as_returned() -> None:
+    result = await research(Wire(fixture("search_native.sse")), search=SearchEngine.AUTO)
+
+    assert result.report.notes.startswith("## Evidence found")
+    assert result.report.unreturned_links == []
+
+
+# -- progress and usage ----------------------------------------------------------------------
+
+
+async def test_progress_reports_searches_and_sources() -> None:
+    progress: list[Progress] = []
+
+    await research(Wire(fixture("search_exa.sse")), progress=progress)
 
     assert [p.kind for p in progress] == [
         JobEventKind.SEARCHING,
         JobEventKind.SOURCES_FOUND,
         JobEventKind.SEARCHING,
-        JobEventKind.MESSAGE,
-        JobEventKind.WRITING,
     ]
     assert progress[0].detail == (
         "Great Wall of China visible from space naked eye astronaut NASA visibility "
         "low Earth orbit evidence"
     )
     assert progress[1].detail == f"{NASA_PDF}\n{NASA_IMAGE}\n{SCIAM}"
-    assert progress[2].detail == (
-        "Great Wall of China naked eye from low Earth orbit astronauts visible unaided eye "
-        "NASA quote conditions shadow"
-    )
-    assert progress[3].detail.startswith("## Evidence\n\n1. **NASA")
-    assert progress[4].detail == ""
 
 
 async def test_reasoning_summaries_are_reported_as_thinking() -> None:
@@ -257,7 +220,7 @@ async def test_reasoning_summaries_are_reported_as_thinking() -> None:
     )
     progress: list[Progress] = []
 
-    await research(Wire(search, json_reply(REPORT)), progress=progress)
+    await research(Wire(search), progress=progress)
 
     assert progress[0] == Progress(
         JobEventKind.THINKING,
@@ -267,70 +230,18 @@ async def test_reasoning_summaries_are_reported_as_thinking() -> None:
         JobEventKind.THINKING,
         JobEventKind.SEARCHING,
         JobEventKind.SOURCES_FOUND,
-        JobEventKind.MESSAGE,
-        JobEventKind.WRITING,
     ]
 
 
-async def test_usage_is_summed_over_both_calls() -> None:
-    report_usage = {"input_tokens": 100, "output_tokens": 50, "cost": 0.001}
-    wire = Wire(fixture("search_exa.sse"), json_reply(REPORT, usage=report_usage))
+async def test_usage_is_what_the_one_call_used() -> None:
+    result = await research(Wire(fixture("search_exa.sse")))
 
-    result = await research(wire)
-
-    assert (result.usage.input_tokens, result.usage.output_tokens) == (6772, 1096)
+    assert (result.usage.input_tokens, result.usage.output_tokens) == (6672, 1046)
     assert result.usage.searches == 2
-    assert result.usage.cost == pytest.approx(0.00901378)
+    assert result.usage.cost == pytest.approx(0.00801378)
 
 
-BAD_REPORTS: list[Any] = [
-    "Here is your report: the wall is not visible.",
-    '{"summary": "cut off',
-    {"summary": "s", "evidence": []},
-    {**REPORT, "evidence": [{**REPORT["evidence"][0], "stance": "refutes"}]},  # type: ignore[dict-item]
-    {**REPORT, "evidence": [{"url": NASA_IMAGE, "stance": "supports"}]},
-    {**REPORT, "evidence": [{**REPORT["evidence"][0], "quote": "   "}]},  # type: ignore[dict-item]
-    {**REPORT, "summary": ""},
-    ["not", "an", "object"],
-]
-
-
-def reply_for(bad: Any) -> bytes:
-    return text_reply(bad) if isinstance(bad, str) else json_reply(bad)
-
-
-@pytest.mark.parametrize("bad", BAD_REPORTS)
-async def test_an_invalid_report_gets_one_repair_attempt(bad: Any) -> None:
-    wire = Wire(fixture("search_exa.sse"), reply_for(bad), json_reply(REPORT))
-
-    result = await research(wire)
-
-    assert len(wire.bodies) == 3
-    assert result.report.evidence[0].url == NASA_IMAGE
-    repair = wire.bodies[2]
-    assert "tools" not in repair
-    assert repair["text"]["format"]["strict"] is True
-    assert repair["provider"] == {"require_parameters": True}
-
-
-async def test_the_repair_request_includes_the_rejected_output() -> None:
-    bad = {"summary": "s", "evidence": [], "undetermined": "u", "verdict": "false"}
-    wire = Wire(fixture("search_exa.sse"), json_reply(bad), json_reply(REPORT))
-
-    await research(wire)
-
-    assert '"verdict": "false"' in wire.bodies[2]["input"]
-    assert "verdict" in wire.bodies[2]["input"].split('"verdict": "false"')[1]
-
-
-@pytest.mark.parametrize("bad", BAD_REPORTS)
-async def test_a_second_invalid_report_fails_the_job(bad: Any) -> None:
-    wire = Wire(fixture("search_exa.sse"), reply_for(bad), reply_for(bad))
-
-    error = await failure(wire)
-
-    assert error.kind is ErrorKind.INVALID_OUTPUT
-    assert len(wire.bodies) == 3
+# -- failures --------------------------------------------------------------------------------
 
 
 async def test_a_refusal_part_fails_with_the_models_own_words() -> None:
@@ -386,9 +297,9 @@ async def test_a_stream_that_ends_before_finishing_is_a_provider_error() -> None
     assert error.kind is ErrorKind.PROVIDER
 
 
-async def test_a_transport_failure_in_the_report_call_keeps_its_kind() -> None:
+async def test_a_transport_failure_keeps_its_kind() -> None:
     from openrouter_wire import error_response
 
-    error = await failure(Wire(fixture("search_exa.sse"), error_response(429)))
+    error = await failure(Wire(error_response(429)))
 
     assert error.kind is ErrorKind.RATE_LIMIT

@@ -9,14 +9,12 @@ import pytest
 
 from manyminds.core.models import (
     ErrorKind,
-    EvidenceItem,
     JobEventKind,
     JobStatus,
     LeadOrigin,
     LeadState,
     Report,
     SearchEngine,
-    Stance,
 )
 from manyminds.core.storage import NotFoundError, Store
 
@@ -43,29 +41,14 @@ def store(db_path: Path) -> Iterator[Store]:
 
 def sample_report() -> Report:
     return Report(
-        summary="One archive gives the date.",
-        evidence=[
-            EvidenceItem(
-                url="https://example.org/a",
-                title="Archive",
-                quote="Opened in 1932.",
-                stance=Stance.SUPPORTS,
-                grounded=True,
-                quote_matched=True,
-            ),
-            EvidenceItem(
-                url="https://example.net/b",
-                quote="Records from that year are missing.",
-                stance=Stance.UNDERMINES,
-            ),
-        ],
-        undetermined="The exact day.",
+        notes="## Findings\n\nOne archive gives the date: https://example.org/a",
+        unreturned_links=["https://example.net/b"],
     )
 
 
 def test_new_database_is_at_the_latest_schema_version(store: Store, db_path: Path) -> None:
     with sqlite3.connect(db_path) as raw:
-        assert raw.execute("PRAGMA user_version").fetchone() == (2,)
+        assert raw.execute("PRAGMA user_version").fetchone() == (6,)
 
 
 def test_check_round_trip(store: Store) -> None:
@@ -279,7 +262,7 @@ def test_reopening_does_not_reapply_migrations(db_path: Path) -> None:
     Store(db_path).close()
 
     with sqlite3.connect(db_path) as raw:
-        assert raw.execute("PRAGMA user_version").fetchone() == (2,)
+        assert raw.execute("PRAGMA user_version").fetchone() == (6,)
 
 
 def test_the_database_never_contains_a_verdict_column(store: Store, db_path: Path) -> None:
@@ -288,3 +271,53 @@ def test_the_database_never_contains_a_verdict_column(store: Store, db_path: Pat
 
     assert "verdict" not in schema.lower()
     assert "confidence" not in schema.lower()
+
+
+def test_a_report_saved_in_the_old_form_is_read_as_notes(store: Store, db_path: Path) -> None:
+    """Reports used to hold a summary, quoted evidence and what was not determined."""
+    import json
+
+    check = store.create_check(title="t", source_text="s", instructions="")
+    thread = store.launch_lead(store.add_lead(check.id, "Lead", LeadOrigin.MANUAL).id)
+    job = store.create_job(
+        thread.id, model="vendor/model", search_engine=SearchEngine.AUTO, instructions=""
+    )
+    store.mark_job_done(job.id, sample_report())
+    old = {
+        "summary": "One archive gives the date.",
+        "evidence": [
+            {
+                "url": "https://example.org/a",
+                "title": "Archive",
+                "quote": "Opened in 1932.",
+                "stance": "supports",
+                "grounded": True,
+                "quote_matched": True,
+            },
+            {
+                "url": "https://example.net/b",
+                "title": None,
+                "quote": "Records are missing.",
+                "stance": "undermines",
+                "grounded": False,
+                "quote_matched": None,
+            },
+        ],
+        "undetermined": "The exact day.",
+    }
+    with sqlite3.connect(db_path) as raw:
+        raw.execute("UPDATE reports SET body = ? WHERE job_id = ?", (json.dumps(old), job.id))
+    raw.close()
+
+    report = store.get_report(job.id)
+
+    assert report is not None
+    assert report.notes == (
+        "One archive gives the date.\n\n"
+        "- supports: Archive https://example.org/a\n"
+        '  "Opened in 1932."\n'
+        "- undermines:  https://example.net/b\n"
+        '  "Records are missing."\n\n'
+        "Could not be determined: The exact day."
+    )
+    assert report.unreturned_links == ["https://example.net/b"]

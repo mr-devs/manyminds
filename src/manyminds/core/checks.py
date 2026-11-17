@@ -1,26 +1,59 @@
 """Use cases for a check: generate leads, edit them, launch research."""
 
-from collections.abc import Sequence
+import logging
+from collections.abc import Awaitable, Sequence
 
 from manyminds.core.errors import ModelError
+from manyminds.core.events import ChatUpdated, EventBus
 from manyminds.core.jobs import JobManager
 from manyminds.core.models import (
     Check,
     ErrorKind,
+    ImageFile,
     Job,
+    JobEventKind,
     JobStatus,
     Lead,
     LeadOrigin,
+    LeadState,
+    Message,
+    MessageKind,
+    MessageRole,
+    MessageStatus,
     SearchEngine,
     Thread,
     ThreadStatus,
 )
-from manyminds.core.ports import ModelClient
-from manyminds.core.storage import Store
+from manyminds.core.ports import (
+    FAILED,
+    FINISHED,
+    IN_PROGRESS,
+    NOT_STARTED,
+    ChatContext,
+    ChatReply,
+    LeadNote,
+    ModelClient,
+    PastTurn,
+    Progress,
+    ProgressCallback,
+)
+from manyminds.core.storage import NotFoundError, Store
 
-INITIAL_LEADS = 10
+logger = logging.getLogger(__name__)
+
+INITIAL_LEADS = 5
 MAX_LEADS = 25
 """The most leads waiting in one list. Launched leads no longer count."""
+MAX_IMAGES = 4
+"""The most images attached to one message."""
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+IMAGE_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif")
+IMAGE_TYPES_PROBLEM = "Only PNG, JPEG, WebP and GIF images can be attached."
+TOO_MANY_IMAGES = f"Attach at most {MAX_IMAGES} images to a message."
+LIST_FULL = (
+    "The list of waiting leads is full, so the leads proposed here were not added. "
+    "Research or remove some, then ask again."
+)
 TITLE_LENGTH = 60
 MAX_TITLE_LENGTH = 120
 
@@ -33,6 +66,10 @@ class CheckBusyError(ValueError):
     """The check still has research under way."""
 
 
+class ChatBusyError(ValueError):
+    """A reply is still being written."""
+
+
 class TooManyLeadsError(ValueError):
     """The list of leads waiting to be researched is full."""
 
@@ -41,17 +78,34 @@ def _squash(text: str) -> str:
     return " ".join(text.split())
 
 
-def _unique_leads(leads: Sequence[str], limit: int) -> list[str]:
+def _key(text: str) -> str:
+    return _squash(text).casefold()
+
+
+def _unique_leads(leads: Sequence[str], limit: int, existing: Sequence[str] = ()) -> list[str]:
     """Trim, drop blanks, and drop repeats that differ only in case or spacing."""
-    seen: set[str] = set()
+    seen: set[str] = {_key(text) for text in existing}
     kept: list[str] = []
     for lead in leads:
         text = lead.strip()
-        key = _squash(text).casefold()
+        key = _key(text)
         if key and key not in seen:
             seen.add(key)
             kept.append(text)
     return kept[:limit]
+
+
+def check_images(images: Sequence[ImageFile]) -> None:
+    """Raise ValueError, with a reason fit to show, if these images cannot be attached."""
+    if len(images) > MAX_IMAGES:
+        raise ValueError(TOO_MANY_IMAGES)
+    for image in images:
+        if image.media_type not in IMAGE_TYPES:
+            raise ValueError(IMAGE_TYPES_PROBLEM)
+        if not image.data:
+            raise ValueError("An attached image is empty.")
+        if len(image.data) > MAX_IMAGE_BYTES:
+            raise ValueError("An image can be 5 MB at most.")
 
 
 def summarise(jobs: Sequence[Job]) -> ThreadStatus:
@@ -72,46 +126,157 @@ class CheckService:
         model: ModelClient,
         jobs: JobManager,
         *,
+        bus: EventBus,
         decompose_model: str,
+        chat_model: str,
         search_engine: SearchEngine,
     ) -> None:
         self.store = store
         self.jobs = jobs
         self._model = model
+        self._bus = bus
         self._decompose_model = decompose_model
+        self._chat_model = chat_model
+        self._report_due: set[str] = set()
+        """Checks whose research finished while a reply was being written."""
+        jobs.on_settled = self._research_settled
+        self._replying: set[str] = set()
+        """Checks with a reply being written right now."""
         self._search_engine = search_engine
 
-    async def create_check(self, text: str, instructions: str = "") -> Check:
-        """Generate leads for a pasted text and save both. Nothing is saved on failure."""
-        if not text.strip():
+    def start_check(
+        self, text: str, instructions: str = "", images: Sequence[ImageFile] = ()
+    ) -> Check:
+        """Save a check at once and work out its leads in the background.
+
+        The check opens with the user's message and a reply still to come. Each step taken
+        is saved under that reply and announced, so the work can be watched.
+        """
+        reply = self._open(text, instructions, images)
+        self.jobs.spawn(self._settle(reply.check_id, reply, self._opening(reply, instructions)))
+        return self.store.get_check(reply.check_id)
+
+    async def create_check(
+        self, text: str, instructions: str = "", images: Sequence[ImageFile] = ()
+    ) -> Check:
+        """Generate leads for a pasted text and wait for them. Nothing is kept on failure."""
+        reply = self._open(text, instructions, images)
+        try:
+            await self._opening(reply, instructions)
+        except BaseException:
+            self.store.delete_check(reply.check_id)
+            raise
+        return self.store.get_check(reply.check_id)
+
+    def regenerate(self, check_id: str) -> None:
+        """Try again to work out a check's leads, after the first attempt failed."""
+        replies = [
+            message
+            for message in self.store.list_messages(check_id)
+            if message.role is MessageRole.ASSISTANT
+        ]
+        if not replies or replies[0].status is not MessageStatus.FAILED:
+            raise ValueError("Lead generation has not failed, so there is nothing to try again.")
+        if check_id in self._replying:
+            raise ChatBusyError("Wait for the reply before trying again.")
+        check = self.store.get_check(check_id)
+        reply = self.store.reopen_message(replies[0].id)
+        self._bus.publish(ChatUpdated(check_id=check_id))
+        self.jobs.spawn(self._settle(check_id, reply, self._opening(reply, check.instructions)))
+
+    def _open(self, text: str, instructions: str, images: Sequence[ImageFile]) -> Message:
+        if not text.strip() and not images:
             raise ValueError("The text to check is empty")
+        check_images(images)
+        return self.store.open_check(
+            title=_squash(text)[:TITLE_LENGTH] or "Image",
+            source_text=text,
+            instructions=instructions,
+            images=images,
+        )
+
+    async def _look_at_images(self, said: Message, record: ProgressCallback) -> list[str | None]:
+        """What each image attached to a message shows. Images not yet looked at are shown
+        to the model now; one that cannot be is left as None, and work goes on.
+
+        The descriptions are a model's words. They are handed on apart from what the user
+        wrote, so that nothing seen in an image is taken for a request or a link of theirs.
+        """
+        for number, image in enumerate(self.store.list_attachments(said.id), start=1):
+            if image.description is not None:
+                continue
+            record(Progress(JobEventKind.NOTE, f"Looking at attached image {number}"))
+            try:
+                description = await self._model.describe_image(
+                    image.media_type, image.data, model=self._decompose_model
+                )
+            except ModelError:
+                continue
+            self.store.describe_attachment(image.id, description)
+        return self.store.list_image_descriptions(said.id)
+
+    async def _opening(self, reply: Message, instructions: str) -> Message:
+        """Work out the leads for a check and fill in its opening reply."""
+        record = self._recorder(reply)
+        said = self.store.list_messages(reply.check_id)[0]
         decomposition = await self._model.decompose(
-            text, instructions, count=INITIAL_LEADS, avoid=[], model=self._decompose_model
+            said.body,
+            instructions,
+            count=INITIAL_LEADS,
+            avoid=[],
+            model=self._decompose_model,
+            images=await self._look_at_images(said, record),
+            on_progress=record,
         )
         leads = _unique_leads(decomposition.leads, INITIAL_LEADS)
         if not leads:
             raise ModelError(ErrorKind.INVALID_OUTPUT, "No leads could be generated for this text.")
-        title = _squash(decomposition.title) or _squash(text)[:TITLE_LENGTH]
+        title = _squash(decomposition.title)
         if len(title) > MAX_TITLE_LENGTH:
             title = title[: MAX_TITLE_LENGTH - 1].rstrip() + "…"
-        return self.store.create_check_with_leads(
-            title=title, source_text=text, instructions=instructions, leads=leads
+        # The title first: if anything fails, no leads are left behind a reply marked failed.
+        if title:
+            self.store.rename_check(reply.check_id, title)
+        return self.store.finish_message(
+            reply.id, decomposition.seen.strip(), leads, LeadOrigin.GENERATED
         )
+
+    def _recorder(self, reply: Message) -> ProgressCallback:
+        """Saves each step under the reply and tells whoever is watching."""
+
+        def record(progress: Progress) -> None:
+            self.store.add_message_step(reply.id, progress.kind, progress.detail)
+            self._bus.publish(ChatUpdated(check_id=reply.check_id))
+
+        return record
 
     def delete_check(self, check_id: str) -> None:
         """Delete a check and its research. Refused while any of that research is running,
         because a running job cannot be stopped and would go on being paid for."""
         if self.store.count_unfinished_jobs(check_id):
             raise CheckBusyError("Research is still running. Wait for it to finish, then delete.")
+        if check_id in self._replying:
+            raise CheckBusyError("A reply is still being written. Wait for it, then delete.")
         self.store.delete_check(check_id)
+        # So that other tabs showing this check, or listing it, find out.
+        self._bus.publish(ChatUpdated(check_id=check_id))
 
-    def add_lead(self, check_id: str) -> Lead:
-        """Add an empty lead for the user to fill in."""
+    def add_lead(self, check_id: str, message_id: str | None = None) -> Lead:
+        """Add an empty lead for the user to fill in, under the given reply or the latest."""
         if len(self.store.list_draft_leads(check_id)) >= MAX_LEADS:
             raise TooManyLeadsError(
                 f"A list holds {MAX_LEADS} leads at most. Research these, then add the rest."
             )
-        return self.store.add_lead(check_id, "", LeadOrigin.MANUAL)
+        if message_id is None:
+            replies = [
+                message.id
+                for message in self.store.list_messages(check_id)
+                if message.role is MessageRole.ASSISTANT
+                and message.status is MessageStatus.COMPLETE
+                and message.kind is not MessageKind.HANDBACK
+            ]
+            message_id = replies[-1] if replies else None
+        return self.store.add_lead(check_id, "", LeadOrigin.MANUAL, message_id)
 
     def update_lead(self, lead_id: str, text: str) -> None:
         """Save a draft lead's wording. It may be left empty, but then it cannot be launched."""
@@ -139,6 +304,172 @@ class CheckService:
         for job in jobs:
             self.jobs.start(job.id)
         return threads
+
+    def launch_lead(self, lead_id: str, models: Sequence[str]) -> Thread:
+        """Start research on one lead, with one job per model. The other leads stay as
+        they are."""
+        if not models:
+            raise ValueError("Choose at least one model")
+        try:
+            lead = self.store.get_lead(lead_id)
+        except NotFoundError:
+            raise NothingToLaunchError("This lead is no longer there") from None
+        if lead.state is not LeadState.DRAFT:
+            raise NothingToLaunchError("This lead has already been started")
+        if not lead.text.strip():
+            raise ValueError("This lead is empty. Fill it in first.")
+        check = self.store.get_check(lead.check_id)
+        thread, jobs = self.store.launch_one_lead(
+            lead_id,
+            models=models,
+            search_engine=self._search_engine,
+            instructions=check.instructions,
+        )
+        for job in jobs:
+            self.jobs.start(job.id)
+        return thread
+
+    async def send(self, check_id: str, text: str, images: Sequence[ImageFile] = ()) -> Message:
+        """Add the user's message to the conversation and return the model's reply.
+
+        Both are saved. A reply that could not be written is saved as failed, with the
+        reason. Leads the reply proposes are saved as drafts; nothing is started.
+        """
+        body = text.strip()
+        if not body and not images:
+            raise ValueError("Write a message first.")
+        check_images(images)
+        self.store.get_check(check_id)
+        if check_id in self._replying:
+            raise ChatBusyError("Wait for the reply before sending another message.")
+        context = self._chat_context(check_id, self.store.list_messages(check_id))
+        reply = self.store.begin_turn(check_id, body, images)
+        return await self._settle(check_id, reply, self._reply(reply, context))
+
+    async def _settle(self, check_id: str, reply: Message, work: Awaitable[Message]) -> Message:
+        """See a reply through: run the work that fills it in, or save why there is none.
+
+        While this runs the check is busy. Watchers are told at the start and at the end,
+        whatever happens.
+        """
+        self._replying.add(check_id)
+        try:
+            self._bus.publish(ChatUpdated(check_id=check_id))
+            try:
+                return await work
+            except ModelError as error:
+                reason = error.message
+            except Exception as error:
+                # The text of an unexpected error may contain anything, so only its type is
+                # kept.
+                name = type(error).__name__
+                logger.error("A reply on check %s failed unexpectedly: %s", check_id, name)
+                reason = f"Unexpected error ({name})"
+            try:
+                return self.store.fail_message(reply.id, reason)
+            except Exception as error:
+                logger.error(
+                    "A failed reply on check %s could not be recorded: %s",
+                    check_id,
+                    type(error).__name__,
+                )
+                return reply
+        finally:
+            self._replying.discard(check_id)
+            self._bus.publish(ChatUpdated(check_id=check_id))
+            if check_id in self._report_due:
+                self._research_settled(check_id)
+
+    def _research_settled(self, check_id: str) -> None:
+        """A research job on this check has ended. Once none is left waiting or running, the
+        report is written from everything the threads handed back."""
+        try:
+            if self.store.count_unfinished_jobs(check_id):
+                return
+            if check_id in self._replying:
+                self._report_due.add(check_id)
+                return
+            self._report_due.discard(check_id)
+            if not any(note.reports for note in self._lead_notes(check_id)):
+                return  # Every lead failed: there is nothing to write a report from.
+            reply = self.store.begin_report(check_id)
+        except Exception as error:
+            logger.error("The report on check %s could not be started: %s", check_id, error)
+            return
+        self._replying.add(check_id)
+        self.jobs.spawn(self._settle(check_id, reply, self._report(reply)))
+
+    async def _report(self, reply: Message) -> Message:
+        context = self._chat_context(reply.check_id, self.store.list_messages(reply.check_id))
+        answer = await self._model.write_report(
+            context, model=self._chat_model, on_progress=self._recorder(reply)
+        )
+        return self._finish(reply, answer)
+
+    async def _reply(self, reply: Message, context: ChatContext) -> Message:
+        check_id = reply.check_id
+        record = self._recorder(reply)
+        asked = next(
+            message
+            for message in self.store.list_messages(check_id)
+            if message.seq == reply.seq - 1
+        )
+        answer = await self._model.converse(
+            asked.body,
+            context,
+            model=self._chat_model,
+            search=self._search_engine,
+            images=await self._look_at_images(asked, record),
+            on_progress=record,
+        )
+        return self._finish(reply, answer)
+
+    def _finish(self, reply: Message, answer: ChatReply) -> Message:
+        """Save what the model wrote for a reply, with the leads it proposed that are new."""
+        check_id = reply.check_id
+        room = MAX_LEADS - len(self.store.list_draft_leads(check_id))
+        existing = [lead.text for lead in self.store.list_leads(check_id)]
+        fresh = _unique_leads(answer.leads, len(answer.leads), existing)
+        leads = fresh[: max(room, 0)]
+        said = answer.body.strip()
+        if fresh and not leads:
+            said = f"{said}\n\n{LIST_FULL}".strip()
+        if not said and not leads:
+            raise ModelError(ErrorKind.INVALID_OUTPUT, "The model sent back an empty reply.")
+        return self.store.finish_message(reply.id, said, leads)
+
+    def _chat_context(self, check_id: str, messages: Sequence[Message]) -> ChatContext:
+        turns = tuple(
+            PastTurn(message.role, message.body, images)
+            for message in messages
+            if message.status is MessageStatus.COMPLETE
+            and message.kind is not MessageKind.HANDBACK
+            and ((images := tuple(self.store.list_image_descriptions(message.id))) or message.body)
+        )
+        return ChatContext(turns=turns, leads=tuple(self._lead_notes(check_id)))
+
+    def _lead_notes(self, check_id: str) -> list[LeadNote]:
+        """Every lead on a check with how far it has got and what its threads handed back."""
+        threads = {thread.lead_id: thread for thread in self.store.list_threads(check_id)}
+        notes = []
+        for lead in self.store.list_leads(check_id):
+            thread = threads.get(lead.id)
+            if thread is None:
+                if lead.text.strip():
+                    notes.append(LeadNote(lead.text, NOT_STARTED))
+                continue
+            jobs = self.store.list_jobs(thread.id)
+            status = summarise(jobs)
+            if status is ThreadStatus.FINISHED:
+                reports = tuple(
+                    report for job in jobs if (report := self.store.get_report(job.id)) is not None
+                )
+                notes.append(LeadNote(thread.lead_text, FINISHED, reports))
+            elif status is ThreadStatus.FAILED:
+                notes.append(LeadNote(thread.lead_text, FAILED))
+            else:
+                notes.append(LeadNote(thread.lead_text, IN_PROGRESS))
+        return notes
 
     def retry_thread(self, thread_id: str) -> list[Job]:
         """Run a failed thread again, once for each model whose latest attempt failed."""

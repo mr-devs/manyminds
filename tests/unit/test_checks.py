@@ -38,7 +38,7 @@ async def test_creating_a_check_stores_the_text_and_generated_leads(
     assert all(lead.state is LeadState.DRAFT for lead in leads)
 
 
-async def test_lead_generation_asks_the_fast_model_for_ten_leads(
+async def test_lead_generation_asks_the_fast_model_for_five_leads(
     service: CheckService, model: RecordingModel
 ) -> None:
     await service.create_check(TEXT, "Prefer archives")
@@ -47,14 +47,14 @@ async def test_lead_generation_asks_the_fast_model_for_ten_leads(
         {
             "text": TEXT,
             "instructions": "Prefer archives",
-            "count": 10,
+            "count": 5,
             "avoid": [],
             "model": "vendor/fast-model",
         }
     ]
 
 
-async def test_at_most_ten_generated_leads_are_kept(
+async def test_at_most_five_generated_leads_are_kept(
     service: CheckService, store: Store, model: RecordingModel
 ) -> None:
     model.leads = [f"Lead number {n}" for n in range(1, 15)]
@@ -67,11 +67,6 @@ async def test_at_most_ten_generated_leads_are_kept(
         "Lead number 3",
         "Lead number 4",
         "Lead number 5",
-        "Lead number 6",
-        "Lead number 7",
-        "Lead number 8",
-        "Lead number 9",
-        "Lead number 10",
     ]
 
 

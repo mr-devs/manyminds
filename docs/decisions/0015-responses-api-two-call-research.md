@@ -1,6 +1,6 @@
 # 15. Responses API, and research as two calls
 
-- Status: Accepted
+- Status: Accepted; the second, report-writing call was removed by decision 22
 - Date: 2026-11-12
 
 ## Context

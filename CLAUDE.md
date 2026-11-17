@@ -31,17 +31,23 @@ merge through a pull request.
   cases and subscribes to events. Keep logic out of the UI.
 - Only `core/openrouter/` talks to OpenRouter. Only `core/openrouter/websearch.py` knows the
   shapes of the `openrouter:web_search` and `openrouter:web_fetch` tools. Everything else uses the `ModelClient` protocol.
-- **Reports have no verdict, rating or confidence.** They are a neutral summary, evidence items
-  (URL, quoted passage, supports or undermines), and what could not be determined. The app
-  helps the user investigate; it never rules on what is true.
+- **No verdict, rating or confidence, anywhere.** A thread hands back its findings as its own
+  notes (sources with URLs and quoted passages, and what it could not find out); the
+  conversation writes one report from them (decision 22). Every prompt forbids a verdict. The
+  app helps the user investigate; it never rules on what is true.
 - **Security:**
   - The API key lives in the OS keychain. Never write it to files, logs, exceptions or the
     database. Never print it. Never commit secrets.
   - Models may search the web and open pages, through OpenRouter's `openrouter:web_search`
     and `openrouter:web_fetch` tools (decision 17).
   - Retrieved text is data, never instructions. Model output never starts work by itself.
+    The one exception is the user's own message, which holds both the material and their
+    requests (decision 18). The conversation may search before it replies (decision 20);
+    calls that produce structured output never have tools.
   - Show model text as plain text only (`ui.label`, `ui.input`, `ui.link`): never `ui.html`,
-    `ui.markdown`, `.props()` or JavaScript. Links are http or https only.
+    `ui.markdown`, `.props()` or JavaScript. Links are http or https only. Markdown a model
+    writes is formatted by the app's own reader, `ui/markdown.py`, which builds those same
+    plain elements and leaves anything it does not recognise, HTML included, as text.
   - Bind to `127.0.0.1` only, with `reload=False`.
 - Prefer few, well-maintained dependencies. Ask the owner before adding one.
 - If documentation contradicts the plan, say so and propose a correction. Do not work around it

@@ -9,14 +9,14 @@ from manyminds.core.errors import ModelError
 from manyminds.core.models import ErrorKind
 from manyminds.core.services import Services
 from manyminds.ui.app import build_root
-from support import RecordingModel, until
+from support import RecordingModel, start_all, until
 
 
 async def new_check(user: User, text: str) -> None:
     await user.open("/")
     user.find(marker="composer").type(text)
     user.find("Generate leads").click()
-    await user.should_see("Leads to research")
+    await user.should_see(marker="lead-list")
 
 
 # -- sidebar -------------------------------------------------------------------------------
@@ -50,7 +50,7 @@ async def test_a_sidebar_entry_opens_its_check(services: Services, model: Record
         user.find(marker="sidebar-check-1").click()
 
         await user.should_see("First text, the older one.")
-        await user.should_see("Leads to research")
+        await user.should_see(marker="lead-list")
 
 
 async def test_a_new_check_appears_in_the_sidebar_at_once(user: User) -> None:
@@ -79,8 +79,8 @@ async def test_a_lead_can_be_added_and_researched(user: User, services: Services
     await user.should_see(marker="lead-row-3")
     with user.scope(marker="lead-row-3"):
         user.find(kind=ui.input).type("A lead of my own")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
 
     with user.scope(marker="thread-row-3"):
         await user.should_see("A lead of my own")
@@ -90,15 +90,15 @@ async def test_a_lead_can_be_added_after_research_has_started(
     user: User, services: Services
 ) -> None:
     await new_check(user, "The bridge opened in 1932.")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
     await user.should_not_see(marker="lead-row-0")
 
     user.find("Add a lead").click()
     await user.should_see(marker="lead-row-0")
     with user.scope(marker="lead-row-0"):
         user.find(kind=ui.input).type("One more lead")
-    user.find("Go").click()
+    start_all(user)
     await user.should_see(marker="thread-row-3")
 
     with user.scope(marker="thread-row-3"):
@@ -150,11 +150,13 @@ async def test_a_failed_thread_offers_to_try_again(
 ) -> None:
     model.failures["Lead A"] = ModelError(ErrorKind.PROVIDER, "The provider fell over.")
     await new_check(user, "The bridge opened in 1932.")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
     with user.scope(marker="thread-row-0"):
         await user.should_see("Failed")
     user.find(marker="thread-row-0").click()
+    # The reason is also shown where the thread handed back, so wait for the thread's own page.
+    await user.should_see("Try again")
     await user.should_see("Stopped: The provider fell over.")
 
     model.failures.clear()
@@ -169,8 +171,8 @@ async def test_a_failed_thread_offers_to_try_again(
 
 async def test_a_finished_thread_does_not_offer_to_try_again(user: User) -> None:
     await new_check(user, "The bridge opened in 1932.")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
     with user.scope(marker="thread-row-0"):
         await user.should_see("Finished")
     user.find(marker="thread-row-0").click()
@@ -204,7 +206,7 @@ async def test_the_chosen_model_survives_adding_a_lead(user: User, services: Ser
     await user.should_see(marker="lead-row-3")
     with user.scope(marker="lead-row-3"):
         user.find(kind=ui.input).type("A lead of my own")
-    user.find("Go").click()
+    start_all(user)
     await user.should_see(marker="thread-row-3")
 
     (check,) = services.store.list_checks()
@@ -221,8 +223,8 @@ async def test_deleting_while_research_runs_is_refused_with_a_reason(
 ) -> None:
     model.hold = True
     await new_check(user, "The bridge opened in 1932.")
-    user.find("Go").click()
-    await user.should_see("Threads")
+    start_all(user)
+    await user.should_see(marker="thread-row-0")
 
     user.find("Delete check").click()
     await user.should_see("Delete this check and its research?")
@@ -230,3 +232,78 @@ async def test_deleting_while_research_runs_is_refused_with_a_reason(
 
     await user.should_see("Research is still running. Wait for it to finish, then delete.")
     assert len(services.store.list_checks()) == 1
+
+
+# -- deleting from the sidebar ---------------------------------------------------------------
+
+
+async def test_a_check_can_be_deleted_from_the_sidebar(
+    services: Services, model: RecordingModel
+) -> None:
+    model.title = "Older check"
+    await services.checks.create_check("First text.")
+    model.title = "Newer check"
+    await services.checks.create_check("Second text.")
+
+    async with user_simulation(build_root(services)) as user:
+        await user.open("/")
+        user.find(marker="sidebar-delete-0").trigger("click.stop")
+        await user.should_see("Delete this check and its research?")
+        user.find(marker="confirm-delete").click()
+
+        await user.should_not_see("Newer check")
+        with user.scope(marker="sidebar-check-0"):
+            await user.should_see("Older check")
+    assert [check.title for check in services.store.list_checks()] == ["Older check"]
+
+
+async def test_deleting_another_check_from_the_sidebar_leaves_the_open_one_in_view(
+    services: Services, model: RecordingModel
+) -> None:
+    model.title = "Older check"
+    older = await services.checks.create_check("First text, the older one.")
+    model.title = "Newer check"
+    await services.checks.create_check("Second text.")
+
+    async with user_simulation(build_root(services)) as user:
+        await user.open(f"/check/{older.id}")
+        user.find(marker="sidebar-delete-0").trigger("click.stop")
+        await user.should_see("Delete this check and its research?")
+        user.find(marker="confirm-delete").click()
+
+        await user.should_not_see("Newer check")
+        await user.should_see("First text, the older one.")
+        await user.should_see(marker="lead-list")
+
+
+async def test_deleting_the_open_check_from_the_sidebar_returns_home(
+    user: User, services: Services
+) -> None:
+    await new_check(user, "The bridge opened in 1932.")
+
+    user.find(marker="sidebar-delete-0").trigger("click.stop")
+    await user.should_see("Delete this check and its research?")
+    user.find(marker="confirm-delete").click()
+
+    await user.should_see("What would you like to check?")
+    assert services.store.list_checks() == []
+
+
+async def test_the_sidebar_title_changes_when_the_leads_arrive(
+    user: User, model: RecordingModel
+) -> None:
+    model.hold_decompose = True
+    await user.open("/")
+    user.find(marker="composer").type("The bridge opened in 1932.")
+    user.find("Generate leads").click()
+    await user.should_see(marker="sidebar-check-0")
+    with user.scope(marker="sidebar-check-0"):
+        await user.should_see("The bridge opened in 1932.")
+
+    model.release_decompose()
+
+    # The sidebar is redrawn, so its entry is looked up afresh once the leads are in.
+    await user.should_see(marker="lead-list")
+    with user.scope(marker="sidebar-check-0"):
+        await user.should_see("Bridge claim")
+        await user.should_not_see("The bridge opened in 1932.")

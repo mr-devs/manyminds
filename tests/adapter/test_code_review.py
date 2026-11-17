@@ -13,8 +13,7 @@ from manyminds.core.models import ErrorKind, JobEventKind, SearchEngine
 from manyminds.core.openrouter.adapter import OpenRouterModelClient
 from manyminds.core.openrouter.client import build_client
 from manyminds.core.openrouter.transport import Transport
-from manyminds.core.ports import Progress, ResearchResult
-from manyminds.core.safety import quote_in_passages
+from manyminds.core.ports import Decomposition, Progress, ResearchResult
 from openrouter_wire import (
     API_KEY,
     Wire,
@@ -31,12 +30,13 @@ PAGE = "https://a.example/page"
 EXCERPT = "The bridge opened to traffic in March 1932 after six years of work."
 
 
-def report(quote: str = "opened to traffic in March 1932", url: str = PAGE) -> dict[str, Any]:
-    return {
-        "summary": "One page was found.",
-        "evidence": [{"url": url, "title": "A page", "quote": quote, "stance": "supports"}],
-        "undetermined": "Everything else.",
-    }
+LEADS = {"title": "One page was found.", "leads": ["A lead."]}
+
+
+async def leads_from(wire: Wire) -> Decomposition:
+    async with wire.http() as http:
+        client = OpenRouterModelClient(Transport(API_KEY, http))
+        return await client.decompose("Some text.", "", count=5, avoid=[], model="vendor/model-b")
 
 
 def search_reply(*annotations: dict[str, Any]) -> bytes:
@@ -84,81 +84,6 @@ async def test_unusual_line_characters_inside_an_event_do_not_split_it(separator
     assert events == [{"type": "response.created", "note": text}]
 
 
-# -- quote checking -----------------------------------------------------------------------
-
-
-async def test_a_quote_copied_with_the_prompts_escaping_still_matches() -> None:
-    search = search_reply(
-        citation(PAGE, "A page", "The effect was significant (p < 0.05) in both trials.")
-    )
-    wire = Wire(search, json_reply(report("significant (p &lt; 0.05) in both trials")))
-
-    result = await research(wire)
-
-    assert "(p &lt; 0.05)" in wire.bodies[1]["input"]
-    assert result.report.evidence[0].quote_matched is True
-
-
-def test_a_quote_containing_an_inline_ellipsis_marker_matches_verbatim() -> None:
-    passage = "The bridge opened [...] to traffic in March 1932."
-
-    assert quote_in_passages("opened [...] to traffic in March 1932", (passage,)) is True
-
-
-def test_a_quote_cannot_span_the_divider_exa_puts_between_passages() -> None:
-    excerpt = "The wall was never visible\n\n...\n\nfrom the Moon with the naked eye."
-
-    assert (
-        quote_in_passages("was never visible ... from the Moon with the naked eye", (excerpt,))
-        is False
-    )
-    assert quote_in_passages("from the Moon with the naked eye", (excerpt,)) is True
-
-
-def test_a_bracketed_divider_on_its_own_line_also_separates_passages() -> None:
-    excerpt = "The wall was never visible\n[...]\nfrom the Moon with the naked eye."
-
-    assert (
-        quote_in_passages("was never visible from the Moon with the naked eye", (excerpt,)) is False
-    )
-
-
-async def test_a_short_verbatim_quote_is_unchecked_not_flagged() -> None:
-    search = search_reply(citation(PAGE, "A page", "The wall is 21,196 km long, the survey says."))
-
-    result = await research(Wire(search, json_reply(report("21,196 km long"))))
-
-    assert result.report.evidence[0].grounded is True
-    assert result.report.evidence[0].quote_matched is None
-
-
-# -- the report call is not given the same text twice ------------------------------------
-
-
-async def test_a_page_cited_repeatedly_appears_once_in_the_report_request() -> None:
-    search = stream_of(
-        search_item("first", [PAGE]),
-        search_item("second", [f"{PAGE}?utm_source=openai"]),
-        message_item(
-            "Notes.",
-            [
-                citation(PAGE, "A page", EXCERPT),
-                citation(PAGE, "A page", EXCERPT),
-                citation(f"{PAGE}?utm_source=openai", "A page", EXCERPT),
-            ],
-        ),
-    )
-    wire = Wire(search, json_reply(report()))
-
-    result = await research(wire)
-
-    given = wire.bodies[1]["input"]
-    assert given.count("<source ") == 1
-    assert given.count(EXCERPT) == 1
-    assert result.report.evidence[0].quote_matched is True
-    assert result.report.evidence[0].url == PAGE
-
-
 # -- odd shapes ---------------------------------------------------------------------------
 
 
@@ -184,7 +109,7 @@ async def test_a_reasoning_item_with_an_odd_summary_is_skipped() -> None:
     )
     progress: list[Progress] = []
 
-    await research(Wire(search, json_reply(report())), progress)
+    await research(Wire(search), progress)
 
     assert JobEventKind.THINKING not in [p.kind for p in progress]
 
@@ -246,22 +171,22 @@ async def test_an_error_without_an_http_status_does_not_claim_one() -> None:
     ],
 )
 async def test_json_with_text_around_it_is_read_without_a_repair_call(wrapping: str) -> None:
-    reply = wrapping.replace("{}", json.dumps(report()))
-    wire = Wire(search_reply(), text_reply(reply))
+    reply = wrapping.replace("{}", json.dumps(LEADS))
+    wire = Wire(text_reply(reply))
 
-    result = await research(wire)
+    result = await leads_from(wire)
 
-    assert result.report.summary == "One page was found."
-    assert len(wire.bodies) == 2
+    assert result.title == "One page was found."
+    assert len(wire.bodies) == 1
 
 
 async def test_text_with_no_json_object_still_goes_to_repair() -> None:
-    wire = Wire(search_reply(), text_reply("No braces here."), json_reply(report()))
+    wire = Wire(text_reply("No braces here."), json_reply(LEADS))
 
-    await research(wire)
+    await leads_from(wire)
 
-    assert len(wire.bodies) == 3
-    assert "No braces here." in wire.bodies[2]["input"]
+    assert len(wire.bodies) == 2
+    assert "No braces here." in wire.bodies[1]["input"]
 
 
 # -- one place builds the client -----------------------------------------------------------
