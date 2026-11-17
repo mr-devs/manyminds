@@ -367,9 +367,9 @@ update to this table.
 |---|---|---|---|
 | 0 | Repository and PyPI name | 0.0.1 | **done 2026-11-11** |
 | 1a | Walking skeleton on the fake model | | **done 2026-11-11** |
-| 1b | Real research through OpenRouter | 0.1.0a1 | done; release pending |
+| 1b | Real research through OpenRouter | | done |
 | 1c | Saved checks, sidebar, lead editing, redesign, lead prompt (owner's request, 2026-11-12) | | done |
-| 1d | The check as one conversation; a Go on each lead (owner's request, 2026-11-12; decision 18) | | done |
+| 1d | The check as one conversation; a Go on each lead (owner's request, 2026-11-12; decision 18) | 0.1.0a1 | **done; released 2026-11-16** (milestones 1a to 1d together) |
 | 2 | Full lead-list controls | | partly done in 1c and 1d |
 | 3 | Home, check page, persistence across restarts | 0.1.0a2 | not started |
 | 4 | Multiple models per lead | | not started |
