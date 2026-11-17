@@ -78,7 +78,8 @@ export OPENROUTER_API_KEY=...     # create one at https://openrouter.ai/keys
 uvx manyminds
 ```
 
-A lead costs roughly one to two US cents with the default model, most of it the web searches.
+A lead costs roughly four to five US cents with the default model (measured 2026-11-16): it
+searches and opens pages over several rounds.
 The cost of each finished thread is shown under its findings.
 
 To look around with placeholder data, no key and no cost:
