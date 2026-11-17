@@ -681,7 +681,7 @@ STEP_TEXT = {
     JobEventKind.READING: "Reading: {detail}",
     JobEventKind.WRITING: "Writing the report",
     JobEventKind.NOTE: "{detail}",
-    JobEventKind.RETRYING: "Trying again: {detail}",
+    JobEventKind.RETRYING: "Waiting: {detail}",
     JobEventKind.FINISHED: "Findings handed back",
     JobEventKind.FAILED: "Stopped: {detail}",
 }

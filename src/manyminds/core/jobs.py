@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import Any
 
 from manyminds.core.errors import ModelError
@@ -13,13 +13,28 @@ from manyminds.core.storage import Store
 
 logger = logging.getLogger(__name__)
 
+MAX_CONCURRENT = 3
+"""Research jobs running at once. Each makes many requests a minute, and OpenRouter limits
+how many an account may make to one model: six at once has been enough to stop them all."""
+RATE_LIMIT_RETRIES = 2
+RATE_LIMIT_WAIT = 60.0
+"""Seconds to wait before trying a rate-limited job again; the limits are counted by the
+minute."""
+
 
 class JobManager:
     """Each job runs in its own task; a failure in one never reaches another."""
 
     def __init__(
-        self, store: Store, model: ModelClient, bus: EventBus, *, max_concurrent: int = 6
+        self,
+        store: Store,
+        model: ModelClient,
+        bus: EventBus,
+        *,
+        max_concurrent: int = MAX_CONCURRENT,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
+        self._sleep = sleep
         self._store = store
         self._model = model
         self._bus = bus
@@ -87,18 +102,32 @@ class JobManager:
         async with self._slots:
             self._store.mark_job_running(job_id)
             record(Progress(JobEventKind.STARTED))
-            try:
-                result = await self._model.research(
-                    thread.lead_text,
-                    self._store.source_for_lead(thread.lead_id),
-                    job.instructions,
-                    model=job.model,
-                    search=job.search_engine,
-                    on_progress=record,
-                )
-            except ModelError as error:
-                self._fail(job_id, error.kind, error.message)
-                return
+            retries = 0
+            while True:
+                try:
+                    result = await self._model.research(
+                        thread.lead_text,
+                        self._store.source_for_lead(thread.lead_id),
+                        job.instructions,
+                        model=job.model,
+                        search=job.search_engine,
+                        on_progress=record,
+                    )
+                    break
+                except ModelError as error:
+                    if error.kind is not ErrorKind.RATE_LIMIT or retries == RATE_LIMIT_RETRIES:
+                        self._fail(job_id, error.kind, error.message)
+                        return
+                    # The job keeps its place while it waits, so fewer run in the meantime.
+                    retries += 1
+                    wait = max(RATE_LIMIT_WAIT, error.retry_after or 0.0)
+                    record(
+                        Progress(
+                            JobEventKind.RETRYING,
+                            f"{error.message} Trying again in {wait:.0f} seconds.",
+                        )
+                    )
+                    await self._sleep(wait)
             self._store.mark_job_done(job_id, result.report, result.usage)
         # The job is finished and saved. Announcing that must not be able to undo it.
         try:

@@ -94,7 +94,10 @@ class Transport:
         elif kind is ErrorKind.TIMEOUT:
             message = "The request to OpenRouter timed out."
         elif kind is ErrorKind.RATE_LIMIT:
-            message = "OpenRouter is limiting requests right now."
+            reason = self._redact(upstream)
+            message = "OpenRouter is limiting requests right now" + (
+                f": {reason}" if reason else "."
+            )
         elif status >= 500:
             kind = ErrorKind.PROVIDER
             message = f"The model provider failed ({where}): {detail}"
