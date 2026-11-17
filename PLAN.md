@@ -278,7 +278,7 @@ are stored as `Lead` rows with `origin = conversation` and `state = draft`.
 | `research_models` | last used | List of model ids. |
 | `conversation_model` | last used | |
 | `search_engine` | `exa` | `auto` or `exa`. |
-| `max_concurrent_jobs` | 6 | |
+| `max_concurrent_jobs` | 3 | Six at once passed a 20-requests-a-minute limit; see decision 23. |
 | `job_timeout_seconds` | 300 | |
 | `disclosure_acknowledged_at` | null | Set during first-run onboarding. |
 
