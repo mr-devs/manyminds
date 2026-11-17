@@ -148,6 +148,22 @@ async def test_a_bare_error_event_mid_stream_is_a_provider_error() -> None:
     assert error.kind is ErrorKind.PROVIDER
 
 
+async def test_a_rate_limit_says_what_the_limit_is() -> None:
+    reason = "new accounts are limited to 20 requests per minute for this model."
+    body = sse({"type": "error", "code": 429, "message": reason})
+
+    error = await failure(Wire(body))
+
+    assert error.kind is ErrorKind.RATE_LIMIT
+    assert error.message == f"OpenRouter is limiting requests right now: {reason}"
+
+
+async def test_a_rate_limit_with_no_reason_given_still_reads_as_a_sentence() -> None:
+    error = await failure(Wire(sse({"type": "error", "code": 429})))
+
+    assert error.message == "OpenRouter is limiting requests right now."
+
+
 async def test_a_timeout_is_a_timeout_error() -> None:
     error = await failure(Wire(httpx.ReadTimeout("timed out")))
 

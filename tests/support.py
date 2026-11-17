@@ -55,6 +55,8 @@ class RecordingModel:
     steps: Sequence[Progress] = ()
     """Progress reported while leads are generated or a reply is written."""
     failures: dict[str, Exception] = field(default_factory=dict)
+    fail_first: dict[str, list[Exception]] = field(default_factory=dict)
+    """Errors a lead's first attempts raise, one for each attempt, before it succeeds."""
     reports: dict[str, Report] = field(default_factory=dict)
     usages: dict[str, Usage] = field(default_factory=dict)
     """What particular leads consumed; other leads report no usage."""
@@ -224,6 +226,8 @@ class RecordingModel:
                 on_progress(progress)
             if lead in self.failures:
                 raise self.failures[lead]
+            if self.fail_first.get(lead):
+                raise self.fail_first[lead].pop(0)
             return ResearchResult(
                 report=self.reports.get(lead) or report_for(lead),
                 usage=self.usages.get(lead, Usage()),
