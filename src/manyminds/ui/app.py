@@ -30,18 +30,23 @@ def build_root(services: Services) -> Callable[[], None]:
     updates: Event[JobUpdated] = Event()
     services.bus.subscribe(updates.emit)
 
-    def home() -> None:
-        pages.home_page(services)
-
-    def check(check_id: str) -> None:
-        pages.check_page(services, updates, check_id)
-
-    def thread(check_id: str, thread_id: str) -> None:
-        pages.thread_page(services, updates, check_id, thread_id)
-
     def root() -> None:
         theme.apply()
-        theme.sidebar()
+
+        @ui.refreshable
+        def saved_checks() -> None:
+            theme.sidebar_checks(services.store.list_checks())
+
+        def home() -> None:
+            pages.home_page(services, saved_checks.refresh)
+
+        def check(check_id: str) -> None:
+            pages.check_page(services, updates, check_id, saved_checks.refresh)
+
+        def thread(check_id: str, thread_id: str) -> None:
+            pages.thread_page(services, updates, check_id, thread_id)
+
+        theme.sidebar(saved_checks)
         ui.sub_pages(
             {
                 "/": home,

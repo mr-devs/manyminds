@@ -1,10 +1,17 @@
-"""The only module that knows the shape of OpenRouter's `openrouter:web_search` tool.
+"""The only module that knows the shapes of OpenRouter's web tools.
 
-Built against the beta documentation as of 2026-11-12. Non-native engines (Exa) return each
-result as a `url_citation` annotation with an excerpt. Provider-native search returns only a
-list of URLs on the search item, and only when the request asks for it with `include`.
+Built against the beta documentation as of 2026-11-12.
+
+`openrouter:web_search`: non-native engines (Exa) return each result as a `url_citation`
+annotation with an excerpt. Provider-native search returns only a list of URLs on the search
+item, and only when the request asks for it with `include`.
+
+`openrouter:web_fetch`: opens one page and returns its text on an output item. The Exa engine
+is always used, because it returns extracted text (for a YouTube link, the transcript) where
+a plain HTTP fetch returns the page's markup.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,7 +20,10 @@ from manyminds.core.safety import url_key
 
 MAX_RESULTS_PER_SEARCH = 5
 MAX_SEARCHES = 6
+MAX_FETCHES = 6
+MAX_PAGE_TOKENS = 8000
 _SEARCH_ITEM_TYPES = ("openrouter:web_search", "web_search_call")
+_FETCH_ITEM_TYPE = "openrouter:web_fetch"
 
 REQUEST_FIELDS: dict[str, Any] = {"include": ["web_search_call.action.sources"]}
 """Extra top-level request fields a search call needs."""
@@ -35,6 +45,43 @@ class Search:
 
     query: str
     urls: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Fetch:
+    """One page the model opened, or tried to."""
+
+    url: str
+    title: str | None
+    content: str | None
+    error: str | None
+
+
+def fetch_tool_entry(
+    *, max_uses: int = MAX_FETCHES, allowed_domains: Sequence[str] | None = None
+) -> dict[str, Any]:
+    """The tool that opens a page. `allowed_domains` limits it to the named sites."""
+    parameters: dict[str, Any] = {
+        "engine": "exa",
+        "max_uses": max_uses,
+        "max_content_tokens": MAX_PAGE_TOKENS,
+    }
+    if allowed_domains is not None:
+        parameters["allowed_domains"] = list(allowed_domains)
+    return {"type": _FETCH_ITEM_TYPE, "parameters": parameters}
+
+
+def fetch_from_item(item: object) -> Fetch | None:
+    """The page an output item says was opened, or None if the item is not a fetch."""
+    if not isinstance(item, dict) or item.get("type") != _FETCH_ITEM_TYPE:
+        return None
+    url = item.get("url")
+    if not isinstance(url, str) or not url:
+        return None
+    content, title, error = item.get("content"), item.get("title"), item.get("error")
+    if isinstance(content, str) and content:
+        return Fetch(url, title if isinstance(title, str) and title else None, content, None)
+    return Fetch(url, None, None, error if isinstance(error, str) and error else "no content")
 
 
 def tool_entry(engine: SearchEngine) -> dict[str, Any]:
@@ -109,6 +156,11 @@ def citations(response: dict[str, Any]) -> list[Citation]:
         if search is not None:
             for url in search.urls:
                 add(url, None, None)
+            continue
+        fetched = fetch_from_item(item)
+        if fetched is not None:
+            if fetched.content is not None:
+                add(fetched.url, fetched.title, fetched.content)
             continue
         for annotation in _annotations(item):
             add(annotation["url"], annotation.get("title"), annotation.get("content"))

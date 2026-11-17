@@ -48,6 +48,16 @@ def search_item(query: str, urls: Sequence[str] = ()) -> dict[str, Any]:
     return {"type": "openrouter:web_search", "id": "st-1", "status": "completed", "action": action}
 
 
+def fetch_item(
+    url: str, title: str | None = None, content: str | None = None, error: str | None = None
+) -> dict[str, Any]:
+    """A page the model opened, shaped like the captured `openrouter:web_fetch` items."""
+    item: dict[str, Any] = {"type": "openrouter:web_fetch", "id": "st-2", "url": url}
+    if error is not None:
+        return {**item, "status": "incomplete", "error": error}
+    return {**item, "status": "completed", "httpStatus": 200, "title": title, "content": content}
+
+
 def reasoning_item(*summaries: str) -> dict[str, Any]:
     return {
         "type": "reasoning",

@@ -191,6 +191,11 @@ class Store:
         rows = self._all("SELECT * FROM checks ORDER BY created_at DESC, rowid DESC")
         return [Check.model_validate(dict(row)) for row in rows]
 
+    def delete_check(self, check_id: str) -> None:
+        """Remove a check and everything under it: leads, threads, jobs, transcripts, reports."""
+        if not self._write("DELETE FROM checks WHERE id = ?", (check_id,)):
+            raise NotFoundError(f"check {check_id}")
+
     # -- leads ------------------------------------------------------------------------
 
     def add_lead(self, check_id: str, text: str, origin: LeadOrigin) -> Lead:
@@ -295,10 +300,16 @@ class Store:
     # -- jobs -------------------------------------------------------------------------
 
     def create_job(
-        self, thread_id: str, *, model: str, search_engine: SearchEngine, instructions: str
+        self,
+        thread_id: str,
+        *,
+        model: str,
+        search_engine: SearchEngine,
+        instructions: str,
+        attempt: int = 1,
     ) -> Job:
         with self._transaction() as db:
-            job_id = self._insert_job(db, thread_id, model, search_engine, instructions)
+            job_id = self._insert_job(db, thread_id, model, search_engine, instructions, attempt)
         return self.get_job(job_id)
 
     def _insert_job(
@@ -308,12 +319,13 @@ class Store:
         model: str,
         search_engine: SearchEngine,
         instructions: str,
+        attempt: int = 1,
     ) -> str:
         job_id = uuid.uuid4().hex
         db.execute(
             "INSERT INTO jobs "
             "(id, thread_id, model, status, search_engine, instructions, attempt, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 job_id,
                 thread_id,
@@ -321,6 +333,7 @@ class Store:
                 JobStatus.QUEUED,
                 search_engine,
                 instructions,
+                attempt,
                 self._stamp(),
             ),
         )
@@ -366,6 +379,43 @@ class Store:
         )
         return self.get_job(job_id)
 
+    def interrupt_unfinished_jobs(self) -> int:
+        """Mark every job that was waiting or running as stopped. Call once, at start-up.
+
+        Nothing is running when the app has only just started, so any such job was cut off
+        when the app last closed. It is left for the user to try again.
+        """
+        message = "Stopped because the app was closed."
+        stamp = self._now()
+        with self._transaction() as db:
+            rows = db.execute(
+                "SELECT id FROM jobs WHERE status IN (?, ?)", (JobStatus.QUEUED, JobStatus.RUNNING)
+            ).fetchall()
+            db.execute(
+                "UPDATE jobs SET status = ?, error_kind = ?, error_message = ?, finished_at = ? "
+                "WHERE status IN (?, ?)",
+                (
+                    JobStatus.FAILED,
+                    ErrorKind.INTERRUPTED,
+                    message,
+                    self._stamp(),
+                    JobStatus.QUEUED,
+                    JobStatus.RUNNING,
+                ),
+            )
+            for row in rows:
+                self._insert_event(db, row["id"], JobEventKind.FAILED, message, stamp)
+        return len(rows)
+
+    def count_unfinished_jobs(self, check_id: str) -> int:
+        """How many of a check's jobs are still waiting or running."""
+        rows = self._all(
+            "SELECT COUNT(*) AS n FROM jobs JOIN threads ON threads.id = jobs.thread_id "
+            "WHERE threads.check_id = ? AND jobs.status IN (?, ?)",
+            (check_id, JobStatus.QUEUED, JobStatus.RUNNING),
+        )
+        return int(rows[0]["n"])
+
     def get_report(self, job_id: str) -> Report | None:
         rows = self._all("SELECT body FROM reports WHERE job_id = ?", (job_id,))
         return Report.model_validate_json(rows[0]["body"]) if rows else None
@@ -375,15 +425,25 @@ class Store:
     def add_job_event(self, job_id: str, kind: JobEventKind, detail: str = "") -> JobEvent:
         stamp = self._now()
         with self._transaction() as db:
-            (seq,) = db.execute(
-                "SELECT COALESCE(MAX(seq), 0) + 1 FROM job_events WHERE job_id = ?", (job_id,)
-            ).fetchone()
-            db.execute(
-                "INSERT INTO job_events (job_id, seq, kind, detail, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (job_id, seq, kind, detail, stamp.isoformat()),
-            )
+            seq = self._insert_event(db, job_id, kind, detail, stamp)
         return JobEvent(job_id=job_id, seq=seq, kind=kind, detail=detail, created_at=stamp)
+
+    def _insert_event(
+        self,
+        db: sqlite3.Connection,
+        job_id: str,
+        kind: JobEventKind,
+        detail: str,
+        stamp: datetime,
+    ) -> int:
+        (seq,) = db.execute(
+            "SELECT COALESCE(MAX(seq), 0) + 1 FROM job_events WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        db.execute(
+            "INSERT INTO job_events (job_id, seq, kind, detail, created_at) VALUES (?, ?, ?, ?, ?)",
+            (job_id, seq, kind, detail, stamp.isoformat()),
+        )
+        return int(seq)
 
     def list_job_events(self, job_id: str, *, after: int = 0) -> list[JobEvent]:
         """A job's transcript in order, optionally only the entries numbered above `after`."""

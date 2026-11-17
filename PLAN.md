@@ -134,8 +134,10 @@ validated `Report` (each item already flagged against the search tool's citation
 
 ### 2.4 How research output is kept honest
 
-1. The model gets one tool, `openrouter:web_search`, and nothing else. No fetch tool, no file
-   access, no shell. A test asserts the request's `tools` array has exactly that one entry.
+1. Research agents get two tools, `openrouter:web_search` and `openrouter:web_fetch`
+   (decision 17, replacing the earlier search-only rule at the owner's request). Links in
+   pasted text are opened with the fetch tool before leads are written, held to the sites the
+   text itself links to. Calls that write structured output get no tools.
 2. Output is validated against our `Report` schema regardless of what the provider promised.
    One repair attempt (a no-tools re-ask that includes the validation errors) is allowed; after
    that the job fails with `invalid_output`.
@@ -363,6 +365,7 @@ update to this table.
 | 0 | Repository and PyPI name | 0.0.1 | **done 2026-11-11** |
 | 1a | Walking skeleton on the fake model | | **done 2026-11-11** |
 | 1b | Real research through OpenRouter | 0.1.0a1 | done; release pending |
+| 1c | Saved checks, sidebar, lead editing, redesign, lead prompt (owner's request, 2026-11-12) | | done |
 | 2 | Full lead-list controls | | not started |
 | 3 | Home, check page, persistence across restarts | 0.1.0a2 | not started |
 | 4 | Multiple models per lead | | not started |
@@ -482,6 +485,22 @@ one model, live progress lines ("searching: ..."), and reports with clickable so
 - Checked by hand in a browser: one real check end to end (lead generated, two searches,
   sources listed, thinking shown, report with five grounded quotes, usage line).
 
+### Milestone 1c: saved checks, lead editing, redesign (owner's request, 2026-11-12)
+
+Built ahead of the original order at the owner's request, taking parts of milestones 2 and 3.
+
+- Checks are saved in the user's data folder and listed in the sidebar, newest first
+  (decision 16). Work cut off by a restart is marked interrupted and can be tried again from
+  its thread. A check can be deleted.
+- Draft leads are numbered, visibly editable fields. **Add a lead** is always available,
+  including after research has started. A list holds 25 leads at most.
+- Wider column (880px), stronger section headings, tinted panels for given text, thread
+  cards, and reports with evidence colour-ruled by which way it cuts.
+- The lead prompt now asks for checkable, single, self-contained, faithful claims, ranked by
+  how much the text depends on them and how much it matters if they are wrong.
+- **Still to do from milestones 2 and 3:** Enter to generate, "Generate 5 more", reordering,
+  renaming a check, "Resume all interrupted", and live updates of the sidebar across tabs.
+
 ### Milestone 2: full lead-list controls
 
 **Tests first**
@@ -585,7 +604,7 @@ recovers by itself.
 - The check page input starts a conversation; it appears under **Conversations** and persists.
 - The context sent to the model contains the original text and all finished reports, and
   excludes failed and unfinished ones.
-- The request has exactly one tool, the same search tool, using the same engine setting.
+- The request has the same search and fetch tools as research, using the same engine setting.
 - Replies are structured; the UI shows "From the reports" and "From a new search" as separate
   labelled sections.
 - A new finding without a URL or quote is rejected (one repair attempt, then the reply is

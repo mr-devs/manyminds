@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from manyminds import __version__
 
 KEY_VARIABLE = "OPENROUTER_API_KEY"
+DATA_DIR_VARIABLE = "MANYMINDS_DATA_DIR"
 
 NO_KEY = f"""\
 manyminds needs an OpenRouter API key to run.
@@ -22,14 +23,32 @@ BAD_KEY = f"""\
 {KEY_VARIABLE} contains characters that cannot be part of a key, such as spaces,
 curly quotes or an ellipsis. Copy the key again and set it without quotes around it."""
 
+ALREADY_RUNNING = """\
+manyminds is already running with this data folder:
+    {folder}
+Use the window that is already open, or stop that copy first."""
+
+BAD_FOLDER = f"""\
+The data folder could not be used ({{reason}}):
+    {{folder}}
+Check that it is a folder you can write to, or set {DATA_DIR_VARIABLE} to another one."""
+
+BAD_DATABASE = f"""\
+The saved checks could not be opened ({{reason}}):
+    {{database}}
+The file may be damaged. Move it aside to start afresh, or set {DATA_DIR_VARIABLE} to
+another folder."""
+
 DISCLOSURE = (
     "Text you paste is sent to OpenRouter, to the model provider behind each model you "
-    "choose, and to the Exa search engine. The app itself runs only on this computer."
+    "choose, and to Exa, which runs the web searches and opens links. The app runs only on "
+    "this computer, and your "
+    "checks are saved on this computer."
 )
 
 START_NOTICE = f"""\
 {DISCLOSURE}
-In this version nothing is saved: checks and reports are gone when you stop the app.
+They are kept in: {{folder}}
 Each lead costs roughly one to two US cents on your OpenRouter account.
 Press Ctrl+C to stop."""
 
@@ -69,23 +88,52 @@ def _run_demo(port: int | None, show: bool) -> None:
     app.run(services, port=port, show=show)
 
 
-def _run_real(api_key: str, port: int | None, show: bool) -> None:
+def _run_real(api_key: str, port: int | None, show: bool) -> int:
+    import sqlite3
+
     from manyminds.core.openrouter.client import build_client
+    from manyminds.core.paths import (
+        DATABASE_NAME,
+        AlreadyRunningError,
+        data_dir,
+        hold_instance_lock,
+        open_store,
+    )
     from manyminds.core.services import build_services
-    from manyminds.core.storage import Store
     from manyminds.ui import app
 
+    folder = data_dir()
+    try:
+        # Held until the process ends, so a second copy cannot start on the same data.
+        lock = hold_instance_lock(folder)
+    except AlreadyRunningError:
+        print(ALREADY_RUNNING.format(folder=folder), file=sys.stderr)
+        return 1
+    except (OSError, sqlite3.Error) as error:
+        print(BAD_FOLDER.format(folder=folder, reason=type(error).__name__), file=sys.stderr)
+        return 1
+    try:
+        store = open_store(folder)
+    except (OSError, sqlite3.Error) as error:
+        lock.close()
+        database = folder / DATABASE_NAME
+        print(BAD_DATABASE.format(database=database, reason=type(error).__name__), file=sys.stderr)
+        return 1
+    # Nothing is running yet, so work still marked as under way was cut off last time.
+    store.interrupt_unfinished_jobs()
     # The HTTP client lives as long as the process, which ends when the server stops.
     model, _ = build_client(api_key)
     services = build_services(
-        store=Store(":memory:"),
+        store=store,
         model=model,
         research_models=RESEARCH_MODELS,
         decompose_model=DECOMPOSE_MODEL,
         notice=DISCLOSURE,
     )
-    print(START_NOTICE)
+    print(START_NOTICE.format(folder=folder))
     app.run(services, port=port, show=show)
+    lock.close()
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -116,5 +164,4 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not (api_key.isascii() and api_key.isprintable() and " " not in api_key):
         print(BAD_KEY, file=sys.stderr)
         return 1
-    _run_real(api_key, args.port, show=not args.no_browser)
-    return 0
+    return _run_real(api_key, args.port, show=not args.no_browser)

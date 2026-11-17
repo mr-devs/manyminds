@@ -68,15 +68,47 @@ class OpenRouterModelClient:
     async def decompose(
         self, text: str, instructions: str, *, count: int, avoid: Sequence[str], model: str
     ) -> Decomposition:
+        tally = _Tally()
+        pages = await self._read_links(text, model, tally)
         body = {
             "model": model,
             "instructions": prompts.DECOMPOSE_INSTRUCTIONS,
-            "input": prompts.decompose_input(text, instructions, count, avoid),
+            "input": prompts.decompose_input(text, instructions, count, avoid, pages),
         }
         wire = await self._structured(
-            body, "decomposition", DECOMPOSITION_SCHEMA, WireDecomposition, _Tally()
+            body, "decomposition", DECOMPOSITION_SCHEMA, WireDecomposition, tally
         )
         return Decomposition(title=wire.title, leads=wire.leads[:count])
+
+    async def _read_links(
+        self, text: str, model: str, tally: _Tally
+    ) -> list[tuple[str, str | None, str | None]]:
+        """Open the links in pasted text and return (url, title, content) for each.
+
+        The tool is held to the sites the text itself links to, so that nothing on a page can
+        send the model on to an address of its own choosing.
+        """
+        sites = prompts.linked_sites(text)
+        if not sites:
+            return []
+        final = await self._run(
+            {
+                "model": model,
+                "instructions": prompts.READ_INSTRUCTIONS,
+                "input": prompts.read_input(text),
+                "tools": [
+                    websearch.fetch_tool_entry(
+                        max_uses=prompts.MAX_LINKED_PAGES, allowed_domains=sites
+                    )
+                ],
+            },
+            tally,
+        )
+        output = final.get("output")
+        fetched = [
+            websearch.fetch_from_item(item) for item in (output if isinstance(output, list) else [])
+        ]
+        return [(page.url, page.title, page.content) for page in fetched if page is not None]
 
     async def research(
         self,
@@ -94,7 +126,7 @@ class OpenRouterModelClient:
                 "model": model,
                 "instructions": prompts.SEARCH_INSTRUCTIONS,
                 "input": prompts.search_input(lead, source_text, instructions),
-                "tools": [websearch.tool_entry(search)],
+                "tools": [websearch.tool_entry(search), websearch.fetch_tool_entry()],
                 **websearch.REQUEST_FIELDS,
             },
             tally,
@@ -237,6 +269,9 @@ def _report_progress(item: dict[str, Any], on_progress: ProgressCallback) -> Non
             on_progress(Progress(JobEventKind.SEARCHING, search.query))
         if search.urls:
             on_progress(Progress(JobEventKind.SOURCES_FOUND, "\n".join(search.urls)))
+    elif (fetched := websearch.fetch_from_item(item)) is not None:
+        failed = "" if fetched.content is not None else " (could not be opened)"
+        on_progress(Progress(JobEventKind.READING, fetched.url + failed))
     elif kind == "reasoning":
         summary = item.get("summary")
         summaries = [

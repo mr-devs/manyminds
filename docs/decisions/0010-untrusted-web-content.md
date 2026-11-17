@@ -9,7 +9,7 @@ Research agents and the conversation model read web content that may contain inj
 
 ## Decision
 
-Give them the search tool and nothing else. Frame retrieved text as data in prompts. Require quoted evidence with URLs. Validate output against a schema. Show model text as plain text only, never as HTML or markdown, with links limited to http and https. No model output can start work; proposed leads wait for the user.
+~~Give them the search tool and nothing else.~~ (Replaced on 2026-11-12 by decision 17: models may also open pages.) Frame retrieved text as data in prompts. Require quoted evidence with URLs. Validate output against a schema. Show model text as plain text only, never as HTML or markdown, with links limited to http and https. No model output can start work; proposed leads wait for the user.
 
 ## Consequences
 
